@@ -1289,8 +1289,7 @@ def main():
 
     # Auto-select device based on model when --device not explicitly set
     if not args.device:
-        model_info = MODEL_REGISTRY[config["model_size"]]
-        preferred = model_info["preferred_device"]
+        preferred = launch_device(config)
         if config["device"] != preferred:
             log(f"Auto-selecting {preferred} for {config['model_size']} "
                 f"(override with --device {config['device']})")
