@@ -352,7 +352,9 @@ class OpenVINOCleanup:
         self.config = config
         self._generation_lock = threading.Lock()
         self.prompt_lookup = True
-        device = config.get("cleanup_device", "GPU")
+        from ov_devices import resolve_device
+        self.device_notes = []
+        self.device = device = resolve_device(config.get("cleanup_device", "GPU"), log=self.device_notes.append)
         try:
             self.pipe = genai.LLMPipeline(str(path), device, prompt_lookup=True,
                                          CACHE_DIR=str(path.parent / "ov-cache"))

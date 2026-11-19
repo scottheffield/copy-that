@@ -358,6 +358,8 @@ class WhisperNPU:
             log(f"NOTE: Large models on NPU may cause driver instability (DEVICE_LOST).")
             log(f"  If inference fails, try rebooting to reset the NPU, or use --device GPU")
 
+        from ov_devices import resolve_device
+        self.device = resolve_device(self.device, log=log)
         log(f"Loading Whisper pipeline on {self.device}...")
         start = time.time()
 
@@ -498,7 +500,10 @@ class ParakeetNPU:
         # 3. Load encoder on NPU/GPU via OpenVINO
         try:
             import openvino as ov
+            from ov_devices import resolve_device
             core = ov.Core()
+            self.device = resolve_device(self.device, core, log)
+            self.decoder_device = resolve_device(self.decoder_device, core, log)
 
             encoder_path = self.model_path / "encoder-model.onnx"
             encoder_model = core.read_model(str(encoder_path))
@@ -515,7 +520,7 @@ class ParakeetNPU:
                 log(f"  Encoder compiled on {self.device}")
             except Exception as e:
                 if self.device != "CPU":
-                    fallback = "GPU" if self.device == "NPU" else "CPU"
+                    fallback = resolve_device("GPU", core, log) if self.device == "NPU" else "CPU"
                     log(f"  Encoder failed on {self.device}: {e}")
                     log(f"  Falling back to {fallback}...")
                     try:

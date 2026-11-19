@@ -23,3 +23,11 @@ def developer_media_untouched(monkeypatch):
     """Engine tests must not pause music the developer is playing."""
     import media_pause
     monkeypatch.setattr(media_pause, "_sessions", lambda: [])
+
+
+@pytest.fixture(autouse=True)
+def gpu_setting_kept(monkeypatch):
+    """Engine tests must not depend on the developer's GPUs. test_ov_devices
+    imports resolve_device directly, so it still tests the real lookup."""
+    import ov_devices
+    monkeypatch.setattr(ov_devices, "resolve_device", lambda device, core=None, log=print: device)

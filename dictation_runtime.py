@@ -262,7 +262,9 @@ class DictationRuntime:
             self._cleanup.load(data_directory() / "models")
             if self._cleanup.model:
                 from pathlib import Path
-                self.log(f"Cleanup loaded: {Path(self.config['cleanup_model_path']).name} on {self.config.get('cleanup_device', 'GPU')}; "
+                for note in getattr(self._cleanup.model, "device_notes", ()):
+                    self.log(f"Cleanup device:{note}")
+                self.log(f"Cleanup loaded: {Path(self.config['cleanup_model_path']).name} on {self._cleanup.model.device}; "
                          f"prompt_lookup={self._cleanup.model.prompt_lookup}")
             if self._stopped.is_set() or superseded():
                 return

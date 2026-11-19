@@ -122,5 +122,17 @@ def test_cleanup_log_names_the_real_device():
         app.ensure_model = lambda: None
         app._cleanup = MagicMock(load_error=None)
         app._cleanup.model.prompt_lookup = True
+        app._cleanup.model.device = device
+        app._cleanup.model.device_notes = []
         app._load_model_background()
         assert any(f"on {device};" in line for line in lines), lines
+
+
+def test_cleanup_and_parakeet_use_the_resolved_gpu(tmp_path, monkeypatch):
+    import ov_devices
+    monkeypatch.setattr(ov_devices, "resolve_device",
+                        lambda device, core=None, log=print: "CPU" if device == "GPU" else device)
+    assert _load_cleanup(tmp_path, {"cleanup_device": "GPU"}) == ["CPU"]
+    model, compiled = _load_parakeet(tmp_path)
+    assert compiled == ["CPU", "CPU"]
+    assert model.decoder_device == "CPU"
