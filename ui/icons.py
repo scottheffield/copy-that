@@ -25,6 +25,20 @@ def save_app_icon(path):
     render_app_icon(256).save(path, sizes=[(s, s) for s in sizes])
 
 
+WELCOME_BITMAP_SIZE = (164, 314)  # The installer's welcome and finish page panel.
+WELCOME_BACKGROUND = "#EAF1FD"
+
+
+def save_welcome_bitmap(path, scale=2):
+    """Write the installer's side panel: the app icon on a pale blue panel.
+    Drawn at 2x so a DPI-aware installer scales it down, not up."""
+    width, height = (n * scale for n in WELCOME_BITMAP_SIZE)
+    panel = Image.new("RGB", (width, height), WELCOME_BACKGROUND)
+    icon = render_app_icon(96 * scale)
+    panel.paste(icon, ((width - icon.width) // 2, height // 3 - icon.height // 2), icon)
+    panel.save(path, format="BMP")
+
+
 def _app_icon_with_status(dot_color, show_x=False):
     """App icon with a colored status dot in the bottom-right corner."""
     base = render_app_icon(ICON_SIZE)

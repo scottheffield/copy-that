@@ -1,8 +1,10 @@
 Unicode true
 RequestExecutionLevel user
+; Draw sharp at any display scaling instead of being stretched by Windows.
+ManifestDPIAware true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
-; APP_NAME, VERSION, APP_DIR, RELEASE_DIR and APP_ICON come from scripts/build_windows.py.
+; APP_NAME, VERSION, APP_DIR, RELEASE_DIR, APP_ICON and WELCOME_BITMAP come from scripts/build_windows.py.
 Name "${APP_NAME}"
 OutFile "${RELEASE_DIR}\${APP_NAME}-Setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\${APP_NAME}"
@@ -11,6 +13,7 @@ SetCompressor lzma
 !define MUI_ICON "${APP_ICON}"
 !define MUI_UNICON "${APP_ICON}"
 !define MUI_ABORTWARNING
+!define MUI_WELCOMEFINISHPAGE_BITMAP "${WELCOME_BITMAP}"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from app_paths import APP_NAME
 from model_store import verify
-from ui.icons import save_app_icon
+from ui.icons import save_app_icon, save_welcome_bitmap
 from version import COMMIT_FILE, VERSION, commit
 
 
@@ -50,6 +50,8 @@ def main():
     icon = ROOT / ".runtime/package-build" / f"{APP_NAME}.ico"
     icon.parent.mkdir(parents=True, exist_ok=True)
     save_app_icon(icon)
+    welcome = icon.parent / "welcome.bmp"
+    save_welcome_bitmap(welcome)
     # The installed app has no git; it reads the commit from this file.
     (icon.parent / COMMIT_FILE).write_text(commit(), encoding="utf-8")
     if not args.skip_app_build:
@@ -60,7 +62,7 @@ def main():
         stage_models(args.with_models, release)
     subprocess.run([str(args.nsis.resolve()), "/V2", f"/DAPP_NAME={APP_NAME}", f"/DVERSION={VERSION}",
                     f"/DAPP_DIR={dist / APP_NAME}", f"/DRELEASE_DIR={release}", f"/DAPP_ICON={icon}",
-                    str(ROOT / "packaging/installer.nsi")], check=True)
+                    f"/DWELCOME_BITMAP={welcome}", str(ROOT / "packaging/installer.nsi")], check=True)
     models_line = ("Keep the models folder beside the installer; setup copies those models in.\n"
                    if args.with_models else
                    "On first run, the welcome window downloads the speech and Polish models.\n")

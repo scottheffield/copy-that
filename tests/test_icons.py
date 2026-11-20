@@ -42,3 +42,13 @@ class TestIconGeneration:
         rec = icon_recording()
         err = icon_error()
         assert rec.tobytes() != err.tobytes()
+
+
+def test_welcome_bitmap_is_a_2x_bmp_for_the_installer(tmp_path):
+    from PIL import Image
+    from ui.icons import save_welcome_bitmap
+    path = tmp_path / "welcome.bmp"
+    save_welcome_bitmap(path)
+    with Image.open(path) as image:
+        assert image.format == "BMP" and image.mode == "RGB"
+        assert image.size == (328, 628)
