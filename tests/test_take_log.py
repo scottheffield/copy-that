@@ -80,3 +80,23 @@ def test_logging_off_does_not_call_disk_writer():
         q.take_log.assert_not_called()
     finally:
         q.stop()
+
+
+@pytest.mark.parametrize("label, path, refused", [
+    ("Google Drive", "G:/takes", True),       # Google Drive on its usual letter
+    ("Google Drive", "H:/takes", True),       # on another letter
+    ("Data", "G:/takes", False),              # an ordinary G: drive
+    ("", "G:/takes", False),                  # label can't be read
+    ("Windows-SSD", "C:/Users/me/My Drive/takes", True),  # mirror mode
+])
+def test_google_drive_is_found_by_label_not_letter(monkeypatch, label, path, refused):
+    monkeypatch.setattr(take_log, "volume_label", lambda directory: label)
+    if refused:
+        with pytest.raises(ValueError, match="Google Drive"):
+            take_log.private_directory(path)
+    else:
+        assert take_log.private_directory(path).parts[-1] == "takes"
+
+
+def test_volume_label_of_a_local_folder_is_readable(tmp_path):
+    assert isinstance(take_log.volume_label(tmp_path), str)

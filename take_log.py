@@ -8,13 +8,29 @@ TAKE_FILES = {"audio.wav", "take.json"}
 _SYNC_MARKERS = ("onedrive", "dropbox", "icloud", "google drive", "box sync", "sharepoint", "synology drive")
 
 
+def volume_label(directory):
+    """The label of the drive holding directory, or "" when it can't be read.
+    Google Drive's virtual drive is labeled "Google Drive", whatever its letter."""
+    try:
+        import ctypes
+        label = ctypes.create_unicode_buffer(261)
+        root = Path(directory).anchor
+        if root and ctypes.windll.kernel32.GetVolumeInformationW(root, label, 261, None, None, None, None, 0):
+            return label.value
+    except (AttributeError, OSError):
+        pass
+    return ""
+
+
 def private_directory(directory):
     directory = Path(directory).expanduser().resolve()
     repo = Path(__file__).resolve().parent
-    # Do not allow personal dictations into tracked project paths or DriveFS.
+    # Do not allow personal dictations into tracked project paths or Google Drive.
     if directory == repo or repo in directory.parents:
         raise ValueError("Take logs must live outside the repository")
-    if directory.drive.upper() == "G:" or any("google drive" in part.lower() for part in directory.parts):
+    if ("google drive" in volume_label(directory).lower()
+            or any(part.lower() in ("google drive", "my drive") or "google drive" in part.lower()
+                   for part in directory.parts)):
         raise ValueError("Take logs must live outside Google Drive")
     if any(marker in part.lower() for part in directory.parts for marker in _SYNC_MARKERS):
         raise ValueError("Take logs must not live in a cloud-synced folder")
