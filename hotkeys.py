@@ -2,6 +2,7 @@
 import ctypes
 import queue
 import threading
+import time
 from ctypes import wintypes
 
 CTRL = {0x11, 0xA2, 0xA3}
@@ -116,7 +117,37 @@ class Gesture:
         return swallow, actions
 
 
+class HookWatch:
+    """Decides when Windows has removed the hook.
+
+    Windows silently removes a low-level hook whose callback runs past its
+    timeout. A live hook swallows the second key of Ctrl+Win, so Windows never
+    sees both held; a held key also repeats, so a live hook keeps hearing it.
+    Both held in Windows' view while the hook hears nothing means it is gone.
+    """
+    def __init__(self, hold=0.5, cooldown=10.0):
+        self.hold, self.cooldown = hold, cooldown
+        self.since = None
+        self.last_reinstall = None
+
+    def check(self, now, both_down, last_event):
+        if not both_down or now - last_event < self.hold:
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = now
+        if now - self.since < self.hold:
+            return False
+        if self.last_reinstall is not None and now - self.last_reinstall < self.cooldown:
+            return False
+        self.since = None
+        self.last_reinstall = now
+        return True
+
+
 class KeyboardHook:
+    WATCH_SECONDS = 0.25
+
     def __init__(self, dispatch, active):
         self.dispatch, self.active = dispatch, active
         self.gesture = Gesture()
@@ -127,6 +158,11 @@ class KeyboardHook:
         self._thread_id = None
         self._lock = threading.Lock()  # Gesture state: hook thread and release_stuck callers
         self._key_down = None
+        self._handle = None
+        self._generation = 0  # Callbacks from a replaced hook pass keys through untouched.
+        self._last_event = time.monotonic()
+        self._stopping = threading.Event()
+        self._watch_thread = None
 
     def finish(self, epoch):
         self._commands.put(epoch)
@@ -151,20 +187,65 @@ class KeyboardHook:
         return stuck
 
     def start(self):
-        self._thread = threading.Thread(target=self._run, name="keyboard-hook", daemon=True)
+        self._start_hook()
+        if self._watch_thread is None:
+            self._watch_thread = threading.Thread(target=self._watch, name="keyboard-hook-watch", daemon=True)
+            self._watch_thread.start()
+
+    def _start_hook(self):
+        self._ready.clear()
+        self._error = None
+        self._generation += 1
+        self._last_event = time.monotonic()
+        self._thread = threading.Thread(target=self._run, args=(self._generation,),
+                                        name="keyboard-hook", daemon=True)
         self._thread.start()
         if not self._ready.wait(5):
             raise RuntimeError("Keyboard hook did not start")
         if self._error:
             raise self._error
 
+    def reinstall(self):
+        """Replace a hook Windows removed. The old one is unhooked first, so
+        two hooks never handle the same key."""
+        user = ctypes.WinDLL("user32")
+        user.UnhookWindowsHookEx.argtypes = [wintypes.HANDLE]
+        with self._lock:
+            old_handle, old_thread = self._handle, self._thread_id
+            self._generation += 1  # The old callback, if it still runs, passes keys through.
+            epoch = self.gesture.epoch
+            self.gesture = Gesture()
+            self.gesture.epoch = epoch  # Pending finish() calls keep matching.
+        if old_handle:
+            user.UnhookWindowsHookEx(old_handle)
+        if old_thread:
+            user.PostThreadMessageW(old_thread, 0x0012, 0, 0)
+        self._start_hook()
+
+    def _watch(self):
+        user = ctypes.WinDLL("user32")
+        user.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        user.GetAsyncKeyState.restype = ctypes.c_short
+        down = lambda vk: bool(user.GetAsyncKeyState(vk) & 0x8000)
+        watch = HookWatch()
+        while not self._stopping.wait(self.WATCH_SECONDS):
+            both = down(0x11) and (down(0x5B) or down(0x5C))
+            if not watch.check(time.monotonic(), both, self._last_event):
+                continue
+            try:
+                self.reinstall()
+                self.dispatch("hook_reinstalled", None, self.gesture.epoch)
+            except Exception:
+                self.dispatch("hook_error", None, self.gesture.epoch)
+
     def stop(self):
+        self._stopping.set()
         if self._thread_id:
             ctypes.windll.user32.PostThreadMessageW(self._thread_id, 0x0012, 0, 0)
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(2)
 
-    def _run(self):
+    def _run(self, generation):
         from windows_io import foreground, mask_start_menu, send_keys
         try:
             user = ctypes.WinDLL("user32", use_last_error=True)
@@ -188,8 +269,9 @@ class KeyboardHook:
                             ("extra", ctypes.c_size_t)]
 
             def handle_key(code, message, address):
-                if code < 0:
+                if code < 0 or generation != self._generation:
                     return user.CallNextHookEx(None, code, message, address)
+                self._last_event = time.monotonic()  # Any key, injected too: the hook is alive.
                 key = ctypes.cast(address, ctypes.POINTER(Key)).contents
                 if key.flags & 0x10:  # Ignore injected menu-mask and paste keys.
                     return user.CallNextHookEx(None, code, message, address)
@@ -226,11 +308,12 @@ class KeyboardHook:
                     self.dispatch("hook_error", None, self.gesture.epoch)
                     return user.CallNextHookEx(None, code, message, address)
 
-            self._callback = callback_type(callback)
+            self._callback = keep_alive = callback_type(callback)  # Outlives a reinstall.
             self._key_down = lambda vk: bool(user.GetAsyncKeyState(vk) & 0x8000)
-            handle = user.SetWindowsHookExW(13, self._callback, kernel.GetModuleHandleW(None), 0)
+            handle = user.SetWindowsHookExW(13, keep_alive, kernel.GetModuleHandleW(None), 0)
             if not handle:
                 raise ctypes.WinError(ctypes.get_last_error())
+            self._handle = handle
             self._ready.set()
             try:
                 msg = wintypes.MSG()

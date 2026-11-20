@@ -390,6 +390,16 @@ class DictationRuntime:
                     self.log(f"Hotkey: forgot a {destination} key released out of sight")
                 elif action == "stuck_released":
                     self.log(f"Hotkey: released a stuck {destination} key")
+                elif action == "hook_reinstalled":
+                    # Ctrl+Win was pressed while the hook was gone: in a take, that meant stop.
+                    recording = self.is_recording
+                    self.log("Hotkey: Windows removed the keyboard hook; reinstalled"
+                             + (" and stopped the take" if recording else ""))
+                    if recording:
+                        self._cue_transition(False)
+                        self.finish_recording()
+                    else:
+                        self._set_state(self.state, {"message": "Hotkey restarted; press Ctrl+Win again"})
                 elif action == "hook_error":
                     self._set_state(self.state, {"message": "Keyboard input could not be handled; restart dictation"})
                 elif action == "quit":

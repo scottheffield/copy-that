@@ -196,3 +196,39 @@ def test_swallowed_presses_are_never_forgotten():
     assert WIN_L not in windows.down
     assert g.forget_released(lambda k: k in windows.down) == set()
     assert WIN_L in g.down
+
+
+from hotkeys import HookWatch
+
+
+def test_watch_reinstalls_when_windows_sees_the_chord_and_the_hook_hears_nothing():
+    w = HookWatch(hold=0.5, cooldown=10)
+    assert not w.check(100.0, True, last_event=99.0)
+    assert not w.check(100.25, True, last_event=99.0)
+    assert w.check(100.5, True, last_event=99.0)
+
+
+def test_watch_leaves_a_live_hook_alone():
+    w = HookWatch(hold=0.5)
+    # Windows sees both held (a late press), but the hook keeps hearing repeats.
+    for i in range(20):
+        now = 100 + i * 0.25
+        assert not w.check(now, True, last_event=now - 0.03)
+    # Nothing held: never a reinstall, however quiet the hook.
+    assert not any(w.check(200 + i, False, last_event=0) for i in range(5))
+
+
+def test_watch_needs_the_chord_held_without_a_break():
+    w = HookWatch(hold=0.5)
+    w.check(100.0, True, last_event=0)
+    w.check(100.25, False, last_event=0)
+    assert not w.check(100.5, True, last_event=0)
+    assert w.check(101.0, True, last_event=0)
+
+
+def test_watch_waits_out_the_cooldown():
+    w = HookWatch(hold=0.5, cooldown=10)
+    w.check(100.0, True, last_event=0)
+    assert w.check(100.5, True, last_event=0)
+    assert not any(w.check(101 + i * 0.25, True, last_event=0) for i in range(20))
+    assert w.check(110.5, True, last_event=0)  # Held right through: fires once the cooldown ends.
