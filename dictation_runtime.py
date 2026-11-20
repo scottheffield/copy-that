@@ -386,6 +386,8 @@ class DictationRuntime:
                     if self.is_recording:
                         self.log("Recording locked hands-free")
                         self._set_state(self.State.RECORDING, {"mode": "locked"})
+                elif action == "stale_forgotten":
+                    self.log(f"Hotkey: forgot a {destination} key released out of sight")
                 elif action == "stuck_released":
                     self.log(f"Hotkey: released a stuck {destination} key")
                 elif action == "hook_error":

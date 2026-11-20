@@ -129,3 +129,70 @@ def test_hidden_release_is_forgotten_when_windows_agrees_or_key_is_pressed_again
     g.event(0x5B, True)  # Held again on purpose: not stuck.
     assert g.stuck(lambda vk: True) == set()
     assert g.hidden_releases == {0x5B}
+
+
+class Windows:
+    """Key state as Windows sees it: only keys the hook passes on change it."""
+    def __init__(self):
+        self.down = set()
+
+    def key(self, g, vk, pressed):
+        # The hook's order: forget missed releases, then decide.
+        stale = g.forget_released(lambda k: k in self.down, vk)
+        swallow, actions = g.event(vk, pressed)
+        if not swallow:
+            (self.down.add if pressed else self.down.discard)(vk)
+        return swallow, actions, stale
+
+    def released_out_of_sight(self, vk):
+        self.down.discard(vk)  # On the lock or sign-in screen.
+
+
+WIN_L, CTRL_L, A, C = 0x5B, 0xA2, 0x41, 0x43
+
+
+def test_win_released_on_the_lock_screen_does_not_start_a_take_or_lock_typing():
+    g, windows = Gesture(), Windows()
+    windows.key(g, WIN_L, True)
+    windows.key(g, 0x4C, True)  # Win+L
+    windows.released_out_of_sight(0x4C)
+    windows.released_out_of_sight(WIN_L)
+    swallow, actions, stale = windows.key(g, CTRL_L, True)  # Ctrl+C after signing in
+    assert stale == {WIN_L}
+    assert (swallow, actions) == (False, [])
+    windows.key(g, C, True)
+    windows.key(g, C, False)
+    windows.key(g, CTRL_L, False)
+    assert windows.key(g, A, True)[:2] == (False, [])
+    assert not g.chord
+
+
+def test_ctrl_released_out_of_sight_does_not_start_on_win():
+    g, windows = Gesture(), Windows()
+    windows.key(g, CTRL_L, True)
+    windows.released_out_of_sight(CTRL_L)
+    assert windows.key(g, WIN_L, True)[:2] == (False, [])
+
+
+@pytest.mark.parametrize("first,second", [(CTRL_L, WIN_L), (WIN_L, CTRL_L)])
+def test_a_real_hold_survives_the_check(first, second):
+    g, windows = Gesture(), Windows()
+    windows.key(g, first, True)
+    assert windows.key(g, second, True)[1] == ["mask", "start"]
+    for _ in range(3):  # Repeats and a hands-free lock while both are held.
+        assert windows.key(g, second, True)[2] == set()
+    assert windows.key(g, SPACE, True)[1] == ["lock"]
+    windows.key(g, SPACE, False)
+    assert g.chord and g.locked
+    windows.key(g, second, False)
+    windows.key(g, first, False)
+    assert not g.chord and not g.down and not windows.down
+
+
+def test_swallowed_presses_are_never_forgotten():
+    g, windows = Gesture(), Windows()
+    windows.key(g, CTRL_L, True)
+    windows.key(g, WIN_L, True)  # Swallowed: Windows never saw it.
+    assert WIN_L not in windows.down
+    assert g.forget_released(lambda k: k in windows.down) == set()
+    assert WIN_L in g.down

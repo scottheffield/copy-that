@@ -43,6 +43,19 @@ class Gesture:
         self.hidden_releases &= self.down  # Pressed again: decide once it is released.
         return stuck
 
+    def forget_released(self, is_down, vk=None):
+        """Drop modifiers this hook missed the release of; returns them.
+
+        The lock screen and sign-in screen hide key releases from the hook, so
+        Win from Win+L can look held forever: the next Ctrl would start a take
+        and the latched chord would swallow all typing. Only presses that
+        reached Windows can be checked, so swallowed ones are left alone.
+        """
+        stale = {k for k in self.down & MODIFIERS
+                 if k != vk and k not in self.swallowed and not is_down(k)}
+        self.down -= stale
+        return stale
+
     def event(self, vk, pressed, active=False, late=False):
         """late: Windows already passed this key on, so a swallow was not honored."""
         actions = []
@@ -186,6 +199,10 @@ class KeyboardHook:
                         if epoch == self.gesture.epoch:
                             self.gesture.finish()
                     pressed = message in (0x100, 0x104)
+                    stale = self.gesture.forget_released(self._key_down, key.vk)
+                    if stale:
+                        names = ", ".join(sorted({KEY_NAMES.get(vk, hex(vk)) for vk in stale}))
+                        self.dispatch("stale_forgotten", names, self.gesture.epoch)
                     stuck = self._release_stuck_locked()
                     if stuck and pressed and key.vk not in MODIFIERS and not self.gesture.chord:
                         # Replay the key after the releases so it types instead of firing a shortcut.
