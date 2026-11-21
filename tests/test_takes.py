@@ -1,5 +1,5 @@
 import threading
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import numpy as np
 from takes import TakeQueue
 from cleanup import Cleaned
@@ -231,5 +231,44 @@ def test_screen_terms_reach_polish_only_when_the_take_seems_to_say_them():
         # Identifiers and close names make Polish run.
         # Short names ("Jane" for "Jake") go to Polish but don't make it run.
         assert seen == [(["Jordan", "OpenVINO", "Jane"], ["Jordan", "OpenVINO"])]
+    finally:
+        q.stop()
+
+
+def hold_and_finish(q, audio, hold_seconds):
+    times = [100.0, 100.0 + hold_seconds]
+    q.recorder.stop.return_value = audio
+    with patch("takes.time.monotonic", lambda: times.pop(0) if len(times) > 1 else times[0]):
+        assert q.start()
+        assert q.finish()
+    assert q.wait_idle()
+
+
+def test_long_hold_with_almost_no_audio_says_microphone_stopped():
+    q, pastes, notices = make_queue()
+    try:
+        hold_and_finish(q, np.zeros(3200, dtype=np.float32), 5.0)
+        assert not pastes
+        assert [d["message"] for s, d in notices if d.get("message")] == ["Microphone stopped sending audio"]
+    finally:
+        q.stop()
+
+
+def test_short_tap_still_says_recording_too_short():
+    q, pastes, notices = make_queue()
+    try:
+        hold_and_finish(q, np.zeros(3200, dtype=np.float32), 0.2)
+        assert not pastes
+        assert [d["message"] for s, d in notices if d.get("message")] == ["Recording too short"]
+    finally:
+        q.stop()
+
+
+def test_normal_take_is_unchanged():
+    q, pastes, notices = make_queue()
+    try:
+        hold_and_finish(q, SPEECH.copy(), 1.0)
+        assert pastes == ["hello world "]
+        assert not [d for s, d in notices if d.get("message")]
     finally:
         q.stop()

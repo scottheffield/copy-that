@@ -9,6 +9,10 @@ from datetime import datetime
 from context import destination_key, identifier, merge_terms, number_names, relevant, strong_name
 
 
+# A hold this long that still gives too little audio to transcribe means the microphone stopped sending.
+MIC_STOPPED_MIN_HOLD_SECONDS = 1.0
+
+
 def with_separator(text, config):
     """Trailing space so the next take starts a new word; never before Enter."""
     if (text and config.get("append_space", True) and not config.get("auto_enter", False)
@@ -31,6 +35,7 @@ class Take:
     text: str = ""
     fallback: str | None = None
     timings: dict = field(default_factory=dict)
+    started: float = 0
     released: float = 0
     live: object = None  # LiveTranscript while recognition runs during the take
     # Above "field", which shadows dataclasses.field from here on.
@@ -113,6 +118,7 @@ class TakeQueue:
                 return False
             # Recording state first: per-take helpers report back on other
             # threads and the display ignores them until it shows recording.
+            take.started = time.monotonic()
             self._notify(take_id=take.id)
             if self.live:
                 try:
@@ -140,7 +146,7 @@ class TakeQueue:
                 return False
             if len(take.audio) < take.config["sample_rate"] * 0.3:
                 take.status = "done"
-                self._notify(message="Recording too short", finalized=True)
+                self._notify(message=self._too_short_message(take), finalized=True)
                 self._prune()
                 return True
             take.status = "queued"
@@ -148,6 +154,13 @@ class TakeQueue:
             self._queue.put(take)
             self._notify(take_id=take.id, finalized=True)
             return True
+
+    @staticmethod
+    def _too_short_message(take):
+        hold = take.released - take.started
+        if hold >= MIC_STOPPED_MIN_HOLD_SECONDS:
+            return "Microphone stopped sending audio"
+        return "Recording too short"
 
     def cancel(self):
         with self._lock:
