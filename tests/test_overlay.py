@@ -57,7 +57,7 @@ def test_caret_after_the_bubble_opened_never_moves_it(overlay):
     x, y, w, h = overlay.placed[-1]
     overlay.set_field(False, (800, 300, 802, 320))
     x2, y2, w2, h2 = overlay.placed[-1]
-    assert (x2 + w2 // 2, y2) == (x + w // 2, y)  # Still centered at the pill spot.
+    assert (x2, y2) == (x, y)  # Still at the pill spot; a wider bubble grows to the right.
     assert overlay._anchor is None
     assert overlay.NO_FIELD_HINT in [line[0] for line in overlay._text_lines()]
 
@@ -163,3 +163,12 @@ def test_x_on_the_transcribing_pill_cancels(overlay):
 def test_notices_have_no_x(overlay):
     overlay.show_notice("Hold Ctrl+Win to dictate", "Ready", seconds=5)
     assert overlay._close_box is None
+
+
+def test_bubble_with_no_caret_keeps_its_left_edge_as_it_widens(overlay):
+    overlay.show_recording()
+    overlay.set_field(False, None)
+    x, y, w, h = overlay.placed[-1]
+    overlay.set_live_text("word " * 60)
+    x2, y2, w2, h2 = overlay.placed[-1]
+    assert w2 > w and x2 == x

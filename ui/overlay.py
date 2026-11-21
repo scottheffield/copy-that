@@ -111,6 +111,7 @@ class OverlayWindow:
         self._on_toggle = on_toggle
         self._on_close = on_close
         self._close_box = None  # (x1, y1, x2, y2) of the X while it shows
+        self._float_left = None  # A bubble with no caret keeps this left edge while it widens
         self._win: tk.Toplevel | None = None
         self._canvas: tk.Canvas | None = None
 
@@ -375,6 +376,8 @@ class OverlayWindow:
         # Store the center x so resizing stays anchored to the drag position
         self._pos_x = x + w // 2
         self._pos_y = y
+        if self._bubble:
+            self._float_left = x
         self._win.geometry(f"+{x}+{y}")
 
     def _on_close_hit(self, event):
@@ -634,6 +637,7 @@ class OverlayWindow:
         self._anchor = None
         self._bar_ids, self._timer_id = [], None
         self._close_box = None
+        self._float_left = None
         self._canvas.delete("all")
         self._win.withdraw()
         # The compact pill redraws from its own size next time it shows.
@@ -753,7 +757,10 @@ class OverlayWindow:
                 y = top - self.CARET_GAP - h
             y = max(y, at)
         else:
-            center = self._get_screen_width() // 2 if self._pos_x is None else self._pos_x
-            x, y = center - w // 2, self._pos_y
+            if self._float_left is None:
+                center = self._get_screen_width() // 2 if self._pos_x is None else self._pos_x
+                self._float_left = center - w // 2
+            # Grows to the right, so the X and the controls never move under the pointer.
+            x, y = self._float_left, self._pos_y
         self._win.geometry(f"{w}x{h}+{x}+{y}")
         self._canvas.configure(width=w, height=h)
