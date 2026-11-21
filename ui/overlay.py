@@ -77,11 +77,11 @@ class OverlayWindow:
     BARS_X = 102            # leaves room for a "300.0s" timer
     BARS = 12
     BAR_W, BAR_GAP = 3, 3
-    LEFT_W = 185            # recording controls; the divider sits here
+    LEFT_W = 213            # recording controls and the X; the divider sits here
     TEXT_MIN_W = 180
     TEXT_MAX_W = 360
     TEXT_PAD_X = 16
-    CLOSE_W = 30            # the X at the right end: cancel or dismiss
+    CLOSE_W = 28            # the X, just left of the divider: it never moves as text grows
     CLOSE_SIZE = 5          # half the X's arm length
     TEXT_PAD_Y = 12
     LINE_GAP = 4
@@ -696,7 +696,7 @@ class OverlayWindow:
             self._text_w = max(self._text_w, min(self.TEXT_MAX_W, need))
         text_h = sum(m[3] for m in measured) + self.LINE_GAP * max(0, len(measured) - 1)
         closable = self._bubble_status in ("recording", "processing", "retained")
-        w = self.LEFT_W + 1 + self._text_w + (self.CLOSE_W if closable else 0)
+        w = self.LEFT_W + 1 + self._text_w
         h = max(self.BUBBLE_H, text_h + 2 * self.TEXT_PAD_Y)
 
         c.delete("all")
@@ -724,7 +724,7 @@ class OverlayWindow:
                           font=font, width=wrap, anchor="nw")
             y += line_h + self.LINE_GAP
         if closable:
-            self._draw_close(w - self.CLOSE_W // 2 - 4, self.BUBBLE_H // 2, h)
+            self._draw_close(self.LEFT_W - self.CLOSE_W // 2 - 2, self.BUBBLE_H // 2, self.BUBBLE_H)
         self._place(w, h)
 
     def _update_meter(self):

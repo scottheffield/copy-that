@@ -87,7 +87,7 @@ def test_live_text_widens_without_shrinking_and_wraps_at_the_limit(overlay):
     assert overlay.placed[-1][2] == wide
     overlay.set_live_text("word " * 60)
     x, y, w, h = overlay.placed[-1]
-    assert w == overlay.LEFT_W + 1 + overlay.TEXT_MAX_W + overlay.CLOSE_W
+    assert w == overlay.LEFT_W + 1 + overlay.TEXT_MAX_W
     assert h > overlay.BUBBLE_H
 
 
@@ -128,9 +128,11 @@ def test_x_during_a_take_cancels_and_stays_clear_of_the_text(overlay):
     overlay.show_recording()
     overlay.set_field(True, None)
     overlay.set_live_text("word " * 60)
-    x, y, w, h = overlay.placed[-1]
     box = overlay._close_box
-    assert box[0] >= overlay.LEFT_W + 1 + overlay.TEXT_MAX_W - overlay.TEXT_PAD_X and box[2] <= w  # Right of the wrapped text.
+    assert box[0] > overlay.BARS_X + overlay.BARS * (overlay.BAR_W + overlay.BAR_GAP)
+    assert box[2] <= overlay.LEFT_W  # Left of the divider: growing text never moves it.
+    overlay.set_live_text("short")
+    assert overlay._close_box == box
     overlay._on_drag_start(Click(box))
     assert closed == [True]
     overlay.show_processing()
