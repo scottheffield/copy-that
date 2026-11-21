@@ -20,8 +20,8 @@ class HistoryWindow:
             return
         self._win = ctk.CTkToplevel(self._root)
         self._win.title('CopyThat · History')
-        self._win.geometry('600x580')
-        self._win.minsize(480, 380)
+        from ui import screen
+        screen.place(self._win, 600, 580, 480, 380)
         self._win.configure(fg_color=theme.BG)
         self._win.update_idletasks()
         self.refresh_theme()

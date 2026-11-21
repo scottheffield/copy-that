@@ -139,8 +139,8 @@ class SettingsWindow:
 
         self._win = ctk.CTkToplevel(self._root)
         self._win.title("CopyThat — Settings")
-        self._win.geometry("760x760")
-        self._win.minsize(720, 620)
+        from ui import screen
+        screen.place(self._win, 760, 760, 720, 620)  # Shrinks to fit a short or scaled screen
         self._win.configure(fg_color=_CONTENT_BG)
 
         self._win.update_idletasks()

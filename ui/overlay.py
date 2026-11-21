@@ -7,31 +7,14 @@ import time
 import tkinter as tk
 from collections import deque
 
+from ui.screen import work_area
 from ui.glass import (
     TRANSPARENT_COLOR, PillCache, composite_on_transparent, pil_to_photo,
     render_button, render_dot, render_icon_mic, render_icon_stop,
     _hex_to_rgba,
 )
 
-def _work_area(x, y):
-    """Work area (left, top, right, bottom) of the monitor containing a point."""
-    try:
-        import ctypes
-        import ctypes.wintypes as wintypes
-
-        class MONITORINFO(ctypes.Structure):
-            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
-                        ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
-        user32 = ctypes.windll.user32
-        user32.MonitorFromPoint.restype = wintypes.HMONITOR
-        monitor = user32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)  # nearest
-        info = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
-        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-            return None
-        r = info.rcWork
-        return r.left, r.top, r.right, r.bottom
-    except Exception:
-        return None
+_work_area = work_area
 
 
 # Color used for window transparency (never appears in UI)
