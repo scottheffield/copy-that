@@ -78,6 +78,19 @@ def restore_spans(text, spans):
     return text
 
 
+# A command is a phrase of its own. After one of these words, or before "of", the same words are ordinary speech.
+NOT_COMMAND_BEFORE = {"a", "an", "the", "this", "that", "my", "your", "our", "his", "her", "its", "their", "another", "every", "each", "any", "one"}
+NOT_COMMAND_AFTER = {"of"}
+
+
+def is_command(before, after):
+    previous = re.findall(r"[\w']+", before[-40:])
+    following = re.match(r"\W*([\w']+)", after)
+    if previous and previous[-1].lower() in NOT_COMMAND_BEFORE:
+        return False
+    return not (following and following.group(1).lower() in NOT_COMMAND_AFTER)
+
+
 def apply_rules(text, dictionary=None, commands=False, issue_keys=()):
     dictionary = dictionary or {}
     # Dictionary replacement is one pass, so mappings do not cascade.
@@ -95,12 +108,19 @@ def apply_rules(text, dictionary=None, commands=False, issue_keys=()):
     if commands:
         # Commands affect only this take, never destination text.
         result = ""
-        for part in re.split(r"\b(new paragraph|new line|scratch that)\b", masked, flags=re.I):
+        parts = re.split(r"\b(new paragraph|new line|scratch that)\b", masked, flags=re.I)
+        after_command = False
+        for index, part in enumerate(parts):
             command = part.lower()
+            if index % 2 and not is_command(result, parts[index + 1]):
+                command = ""  # ordinary speech: "a new line of products"
+            if after_command and index % 2 == 0:
+                part = part.lstrip(" \t.,;:!?")  # punctuation the speaker said around the command
+            after_command = index % 2 == 1 and command != ""
             if command in ("new paragraph", "new line"):
-                result = result.rstrip(" ,") + ("\n\n" if command == "new paragraph" else "\n")
+                result = result.rstrip(" ,;:") + ("\n\n" if command == "new paragraph" else "\n")
             elif command == "scratch that":
-                prior = result.rstrip(" ,")
+                prior = result.rstrip(" ,;:")
                 sentences = list(re.finditer(r"[.!?](?:\s+|$)", prior))
                 # Remove the current unfinished sentence, or last completed one.
                 boundary = sentences[-1].end() if sentences and sentences[-1].end() < len(prior) else (sentences[-2].end() if len(sentences) > 1 else 0)

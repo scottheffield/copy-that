@@ -15,6 +15,19 @@ def test_spoken_commands_only_change_current_take_when_enabled():
     assert apply_rules("say scratch that") == "Say scratch that"
 
 
+def test_spoken_commands_leave_no_stray_punctuation():
+    assert apply_rules("Ask Alex. New line. Then go", commands=True) == "Ask Alex.\nThen go"
+    assert apply_rules("hello, new paragraph, world", commands=True) == "Hello\n\nWorld"
+    assert apply_rules("First sentence. Wrong sentence. Scratch that. Correct sentence.", commands=True) == "First sentence. Correct sentence."
+
+
+def test_spoken_command_words_inside_ordinary_speech_stay_words():
+    assert apply_rules("this is a new line of products today", commands=True) == "This is a new line of products today"
+    assert apply_rules("we wrote the new paragraph of the report", commands=True) == "We wrote the new paragraph of the report"
+    assert apply_rules("send a new line", commands=True) == "Send a new line"
+    assert apply_rules("first part new line second part", commands=True) == "First part\nSecond part"
+
+
 def test_literal_mode_bypasses_all_cleanup():
     model = Mock()
     config = {"cleanup_enabled": True, "spoken_commands": True, "dictionary": {"um": "oops"}}
