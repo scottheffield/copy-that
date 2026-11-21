@@ -317,6 +317,22 @@ class TestPasteLast:
         assert order == ["cue", "finish"]
 
 
+    def test_bubble_x_frees_stuck_keys_then_cancels(self):
+        app = DictationApp({**DEFAULT_CONFIG, "beep_on_start": False, "vad_enabled": False})
+        order = []
+        app._hook = MagicMock()
+        app._hook.release_stuck.side_effect = lambda: order.append("release")
+        app.cancel = lambda: order.append("cancel")
+        thread = threading.Thread(target=app._command_loop, daemon=True)
+        app.close_take()
+        thread.start()
+        time.sleep(0.2)
+        app._stopped.set()
+        app._commands.put(("quit", None, 0))
+        thread.join(1)
+        assert order == ["release", "cancel"]
+
+
 class TestDictationPriority:
     def run_start(self, app):
         app.start_recording = MagicMock(return_value=True)
