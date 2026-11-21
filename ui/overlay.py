@@ -81,6 +81,8 @@ class OverlayWindow:
     TEXT_MIN_W = 180
     TEXT_MAX_W = 360
     TEXT_PAD_X = 16
+    CLOSE_W = 30            # the X at the right end: cancel or dismiss
+    CLOSE_SIZE = 5          # half the X's arm length
     TEXT_PAD_Y = 12
     LINE_GAP = 4
     CARET_GAP = 8           # px between the caret line and the bubble
@@ -98,14 +100,17 @@ class OverlayWindow:
     NO_FIELD_HINT = "No text field  ·  Shift+Alt+Z pastes it later"
     RETAINED_HINT = "Click into a text field, then press Shift+Alt+Z"
 
-    def __init__(self, root, on_toggle=None):
+    def __init__(self, root, on_toggle=None, on_close=None):
         """
         Args:
             root: Parent Tk/CTk window.
             on_toggle: Callback() to toggle recording on dot click.
+            on_close: Callback() for the X: cancel the take and free stuck keys.
         """
         self._root = root
         self._on_toggle = on_toggle
+        self._on_close = on_close
+        self._close_box = None  # (x1, y1, x2, y2) of the X while it shows
         self._win: tk.Toplevel | None = None
         self._canvas: tk.Canvas | None = None
 
@@ -279,6 +284,7 @@ class OverlayWindow:
         c = self._canvas
         c.delete("all")
         self._photo_refs.clear()
+        self._close_box = None
         w, h = int(self._cur_w), int(self._cur_h)
         r = min(self.RADIUS, h // 2)
         mid = h // 2
@@ -334,12 +340,17 @@ class OverlayWindow:
         for tx, ty, text, fill, font, anchor in text_items:
             c.create_text(tx, ty, text=text, fill=fill, font=font,
                           anchor=anchor)
+        if self._state == "processing" and w > self.COMPACT_W + 20:
+            self._draw_close(w - 24, mid, h)
 
     # --- Drag to reposition -----------------------------------------------
 
     def _on_drag_start(self, event):
         """Click on dot -> toggle recording. Click elsewhere -> start drag."""
         self._drag_is_click = True
+        if self._on_close_hit(event):
+            self._close_clicked()
+            return
         if event.x <= self._DOT_HIT_X and self._state in ("ready", "recording"):
             # Clicked the dot button — toggle recording
             if self._on_toggle:
@@ -366,6 +377,26 @@ class OverlayWindow:
         self._pos_y = y
         self._win.geometry(f"+{x}+{y}")
 
+    def _on_close_hit(self, event):
+        box = self._close_box
+        return bool(box) and box[0] <= event.x <= box[2] and box[1] <= event.y <= box[3]
+
+    def _close_clicked(self):
+        """Recording or transcribing: cancel, as Escape does. Not pasted: dismiss."""
+        dismiss = self._state == "result"
+        if self._on_close:
+            self._on_close()  # Also frees a modifier Windows still holds, in every state.
+        if dismiss:
+            self.show_ready()
+
+    def _draw_close(self, cx, cy, h):
+        """An X centered at (cx, cy); its hit area spans the full height."""
+        c, k = self._canvas, self.CLOSE_SIZE
+        for x1, y1, x2, y2 in ((cx - k, cy - k, cx + k, cy + k), (cx - k, cy + k, cx + k, cy - k)):
+            c.create_line(x1, y1, x2, y2, fill=self.TEXT_DIM, width=2, capstyle="round")
+        half = self.CLOSE_W // 2
+        self._close_box = (cx - half, 0, cx + half, h)
+
     # --- Hover & cursor ---------------------------------------------------
 
     def _on_leave(self, event):
@@ -374,7 +405,7 @@ class OverlayWindow:
 
     def _on_mouse_move(self, event):
         """Show hand cursor when over the dot button area."""
-        if event.x <= self._DOT_HIT_X and self._state in ("ready", "recording"):
+        if (event.x <= self._DOT_HIT_X and self._state in ("ready", "recording")) or self._on_close_hit(event):
             self._canvas.configure(cursor="hand2")
         else:
             self._canvas.configure(cursor="")
@@ -602,6 +633,7 @@ class OverlayWindow:
         self._bubble_text = ""
         self._anchor = None
         self._bar_ids, self._timer_id = [], None
+        self._close_box = None
         self._canvas.delete("all")
         self._win.withdraw()
         # The compact pill redraws from its own size next time it shows.
@@ -663,10 +695,12 @@ class OverlayWindow:
             need = -(-(x2 - x1 + 2 * self.TEXT_PAD_X) // 8) * 8
             self._text_w = max(self._text_w, min(self.TEXT_MAX_W, need))
         text_h = sum(m[3] for m in measured) + self.LINE_GAP * max(0, len(measured) - 1)
-        w = self.LEFT_W + 1 + self._text_w
+        closable = self._bubble_status in ("recording", "processing", "retained")
+        w = self.LEFT_W + 1 + self._text_w + (self.CLOSE_W if closable else 0)
         h = max(self.BUBBLE_H, text_h + 2 * self.TEXT_PAD_Y)
 
         c.delete("all")
+        self._close_box = None
         photo = self._frame(w, h)
         self._photo_refs = [photo]
         c.create_image(0, 0, image=photo, anchor="nw")
@@ -689,6 +723,8 @@ class OverlayWindow:
             c.create_text(self.LEFT_W + 1 + self.TEXT_PAD_X, y, text=text, fill=color,
                           font=font, width=wrap, anchor="nw")
             y += line_h + self.LINE_GAP
+        if closable:
+            self._draw_close(w - self.CLOSE_W // 2 - 4, self.BUBBLE_H // 2, h)
         self._place(w, h)
 
     def _update_meter(self):

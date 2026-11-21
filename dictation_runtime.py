@@ -329,6 +329,10 @@ class DictationRuntime:
     def cancel(self):
         return self._takes.cancel()
 
+    def close_take(self):
+        """The bubble's X: cancel like Escape, and free modifiers Windows still holds; any thread."""
+        self.dispatch("close")
+
     def paste_last(self):
         """Explicit recovery: paste the latest result where the user is now."""
         entry = next((e for e in reversed(self.history) if e.get("text")), None)
@@ -378,6 +382,11 @@ class DictationRuntime:
                         self._cue_transition(False)  # Cue at release, before the mic stops.
                     self.finish_recording()
                 elif action == "cancel":
+                    self.cancel()
+                elif action == "close":
+                    # Through this queue, so it never races a hotkey action.
+                    if self._hook:
+                        self._hook.release_stuck()
                     self.cancel()
                 elif action == "paste_last":
                     # Waits for Shift/Alt release; keep recording commands responsive.

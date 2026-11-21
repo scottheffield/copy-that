@@ -87,7 +87,7 @@ def test_live_text_widens_without_shrinking_and_wraps_at_the_limit(overlay):
     assert overlay.placed[-1][2] == wide
     overlay.set_live_text("word " * 60)
     x, y, w, h = overlay.placed[-1]
-    assert w == overlay.LEFT_W + 1 + overlay.TEXT_MAX_W
+    assert w == overlay.LEFT_W + 1 + overlay.TEXT_MAX_W + overlay.CLOSE_W
     assert h > overlay.BUBBLE_H
 
 
@@ -115,3 +115,49 @@ def test_hotkey_while_loading_shows_a_notice_then_returns_to_loading(overlay):
     overlay._root.after(50, overlay._root.quit)
     overlay._root.mainloop()
     assert overlay._state == "loading" and overlay._win.state() == "withdrawn"
+
+
+class Click:
+    def __init__(self, box):
+        self.x, self.y = (box[0] + box[2]) // 2, (box[1] + box[3]) // 2
+
+
+def test_x_during_a_take_cancels_and_stays_clear_of_the_text(overlay):
+    closed = []
+    overlay._on_close = lambda: closed.append(True)
+    overlay.show_recording()
+    overlay.set_field(True, None)
+    overlay.set_live_text("word " * 60)
+    x, y, w, h = overlay.placed[-1]
+    box = overlay._close_box
+    assert box[0] >= overlay.LEFT_W + 1 + overlay.TEXT_MAX_W - overlay.TEXT_PAD_X and box[2] <= w  # Right of the wrapped text.
+    overlay._on_drag_start(Click(box))
+    assert closed == [True]
+    overlay.show_processing()
+    assert overlay._close_box
+    overlay._on_drag_start(Click(overlay._close_box))
+    assert closed == [True, True]
+
+
+def test_x_on_an_unpasted_result_dismisses_it(overlay):
+    closed = []
+    overlay._on_close = lambda: closed.append(True)
+    overlay.show_result("Put this in the notes.", linger=True)
+    overlay._on_drag_start(Click(overlay._close_box))
+    assert closed == [True]  # Still frees stuck keys.
+    assert overlay._state == "ready" and overlay._win.state() == "withdrawn"
+
+
+def test_x_on_the_transcribing_pill_cancels(overlay):
+    closed = []
+    overlay._on_close = lambda: closed.append(True)
+    overlay.show_processing()  # Never revealed: the compact pill.
+    overlay._cur_w = overlay._tgt_w
+    overlay._redraw()
+    overlay._on_drag_start(Click(overlay._close_box))
+    assert closed == [True]
+
+
+def test_notices_have_no_x(overlay):
+    overlay.show_notice("Hold Ctrl+Win to dictate", "Ready", seconds=5)
+    assert overlay._close_box is None

@@ -58,7 +58,8 @@ class GUIApp:
         self._engine.add_callback(self._on_state_change)
 
         # Overlay
-        self._overlay = OverlayWindow(self._root, on_toggle=lambda: self._engine.toggle_recording())
+        self._overlay = OverlayWindow(self._root, on_toggle=lambda: self._engine.toggle_recording(),
+                                      on_close=lambda: self._engine.close_take())
         self._overlay.set_show_balloon(config.get("show_balloon", True))
         self._overlay.set_balloon_font_size(config.get("balloon_font_size", 16))
         self._overlay.set_bubble_position(config.get("bubble_position", "cursor"))
