@@ -18,6 +18,7 @@ model while no dictation take is active, and abandons a window the moment one
 starts.
 """
 import json
+import re
 import threading
 import time
 import wave
@@ -761,3 +762,114 @@ def transcribe_folder(folder, get_model, busy, language="en", log=print, stopped
         others.close()
     write_meta(folder, meta)
     return ok
+
+
+# -- Library: the Meetings page ---------------------------------------------------
+
+LINE = re.compile(r"^\*\*\[(?P<time>[\d:]+)\] (?P<speaker>[^:*]+):\*\* (?P<text>.*)$")
+BUSY = ("recording", "transcribing")
+
+
+def list_meetings(root):
+    """Every meeting folder under root with a readable meta.json, newest first.
+    Each item: folder, title, started (datetime), duration (seconds), status."""
+    root = Path(root)
+    found = []
+    if not root.is_dir():
+        return found
+    for meta_path in root.glob("*/meta.json"):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            started = datetime.fromisoformat(meta["started"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        found.append({"folder": meta_path.parent, "title": meta.get("title") or "Untitled",
+                      "started": started, "duration": meta.get("duration_seconds") or 0,
+                      "status": meta.get("status", "done")})
+    found.sort(key=lambda item: item["started"], reverse=True)
+    return found
+
+
+def display_title(item):
+    """An untitled meeting is named by its start time, so a list of them stays readable."""
+    if item["title"] in ("", "Untitled"):
+        return f"Untitled · {item['started']:%I:%M %p}".replace("· 0", "· ")
+    return item["title"]
+
+
+def day_label(started, today):
+    """Group heading: Today, Nov 24 / Yesterday, Nov 23 / Friday, Nov 21 / Nov 3, 2025."""
+    day = started.date()
+    month_day = f"{started:%b} {day.day}"
+    if day == today:
+        return f"Today, {month_day}"
+    if (today - day).days == 1:
+        return f"Yesterday, {month_day}"
+    if day.year == today.year:
+        return f"{started:%A}, {month_day}"
+    return f"{month_day}, {day.year}"
+
+
+def read_transcript(folder):
+    try:
+        return (Path(folder) / "transcript.md").read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def transcript_lines(text, limit=None):
+    """(time, speaker, text) for each spoken line of a transcript.md."""
+    lines = []
+    for raw in (text or "").splitlines():
+        match = LINE.match(raw.strip())
+        if match:
+            lines.append((match["time"], match["speaker"], match["text"]))
+            if limit and len(lines) >= limit:
+                break
+    return lines
+
+
+def matches(item, query):
+    """Case-insensitive match on the title or the transcript text."""
+    query = query.strip().lower()
+    if not query:
+        return True
+    if query in display_title(item).lower():
+        return True
+    text = read_transcript(item["folder"])
+    return bool(text) and query in text.lower()
+
+
+def rename_meeting(folder, title):
+    """Set the title in meta.json and the transcript's heading. Folder names stay date-based."""
+    title = " ".join(title.split())[:120]
+    if not title:
+        raise ValueError("A meeting needs a title")
+    folder = Path(folder)
+    meta = read_meta(folder)
+    meta["title"] = title
+    write_meta(folder, meta)
+    text = read_transcript(folder)
+    if text is not None and text.startswith("# "):
+        rest = text.split("\n", 1)[1] if "\n" in text else ""
+        (folder / "transcript.md").write_text(f"# {title}\n{rest}", encoding="utf-8")
+    return meta
+
+
+def trash_folder(folder):
+    """Move a meeting folder to the Recycle Bin. Returns True when it is gone."""
+    import ctypes
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT),
+                    ("pFrom", wintypes.LPCWSTR), ("pTo", wintypes.LPCWSTR),
+                    ("fFlags", ctypes.c_ushort), ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
+
+    FO_DELETE, FOF_SILENT, FOF_NOCONFIRMATION, FOF_ALLOWUNDO, FOF_NOERRORUI = 3, 0x4, 0x10, 0x40, 0x400
+    folder = Path(folder).resolve()
+    op = SHFILEOPSTRUCTW(wFunc=FO_DELETE, pFrom=str(folder) + "\0",
+                         fFlags=FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI)
+    result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    return result == 0 and not op.fAnyOperationsAborted and not folder.exists()

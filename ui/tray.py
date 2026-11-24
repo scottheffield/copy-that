@@ -49,14 +49,14 @@ class TrayManager:
         items.append(pystray.Menu.SEPARATOR)
 
         if self._on_history:
-            items.append(pystray.MenuItem("History", lambda: self._on_history()))
+            items.append(pystray.MenuItem("Dictation history", lambda: self._on_history()))
 
         if self._on_settings:
             items.append(pystray.MenuItem("Settings", lambda: self._on_settings(),
                                           default=self._on_open is None))
         if self._on_open:
             # Left-click opens the main window at the last page used; it never starts a
-            # recording. Hidden from the menu, which already has History and Settings.
+            # recording. Hidden from the menu, which already has Dictation history and Settings.
             items.append(pystray.MenuItem("Open CopyThat", lambda: self._on_open(),
                                           default=True, visible=False))
         if self._on_startup:

@@ -30,6 +30,7 @@ class GUIApp:
     """Main GUI application wiring all components."""
 
     _meeting = None  # The current or last MeetingSession
+    _retranscribing = frozenset()  # Replaced by a set in __init__; folders being re-transcribed
     _recovery_started = False
 
     def __init__(self, config: dict):
@@ -95,6 +96,7 @@ class GUIApp:
 
         # Lazy-created windows
         self._settings_win: SettingsWindow | None = None
+        self._retranscribing = set()
         self._audio_poll_id = None
         from ui.theme import ThemeController
         self._theme_controller = ThemeController(self._root, config.get("theme", "system"), self._refresh_theme)
@@ -380,7 +382,7 @@ class GUIApp:
             self._root.after_cancel(self._audio_poll_id)
             self._audio_poll_id = None
 
-    # -- Main window (History and Settings) ---------------------------------
+    # -- Main window (Dictation, Meetings and Settings) ----------------------
 
     def _show_main(self, page=None):
         """Open the main window at page, or at the last page used."""
@@ -390,7 +392,7 @@ class GUIApp:
         devices = DictationApp.list_input_devices()
         self._settings_win = SettingsWindow(
             self._root, self._config, devices, on_apply=self._on_settings_apply, models=self,
-            history=lambda: self._engine.history, on_page_change=self._on_page_change,
+            history=lambda: self._engine.history, on_page_change=self._on_page_change, meetings=self,
         )
         self._root.after(0, lambda: self._settings_win.show(page))
 
@@ -398,7 +400,7 @@ class GUIApp:
         self._show_main("General")
 
     def _show_history(self):
-        self._show_main("History")
+        self._show_main("Dictation")
 
     def _on_page_change(self, page):
         if self._config.get("main_window_page") == page:
@@ -528,6 +530,7 @@ class GUIApp:
         self._chip.show_recording(consent=not self._config.get("meeting_consent_seen", False))
         self._poll_chip()
         self._tray.update_state(self._tray._state)  # Menu text: Stop meeting recording
+        self._refresh_meetings()
 
     def _poll_chip(self):
         session = self._meeting
@@ -548,9 +551,13 @@ class GUIApp:
             chime_stop()
         self._chip.show_finishing(session.meta["duration_seconds"])
         self._tray.update_state(self._tray._state)
+        self._refresh_meetings()
 
     def _meeting_done(self, folder, ok):
         log(f"Meeting: transcript {'saved' if ok else 'not finished'} in {folder.name}")
+        if self._retranscribing:
+            self._retranscribing.discard(Path(folder))
+        self._refresh_meetings()
         if self._meeting and self._meeting.folder == folder and self._chip.state == "finishing":
             self._chip.show_ready() if ok else self._chip.show_failed()
 
@@ -577,6 +584,43 @@ class GUIApp:
             save_config(self._config)
         except (OSError, ValueError) as error:
             log(f"Could not save settings ({type(error).__name__})")
+
+    def _refresh_meetings(self):
+        if self._settings_win:
+            self._settings_win.refresh_meetings()
+
+    def meeting_in_use(self, folder):
+        """True while a meeting is being recorded or transcribed into folder."""
+        folder = Path(folder)
+        current = self._meeting
+        if current and current.folder == folder and not current.finished.is_set():
+            return True
+        return folder in self._retranscribing
+
+    def retranscribe_meeting(self, folder):
+        """Transcribe a meeting again from its WAV files, giving way to dictation as usual."""
+        import threading
+        from meetings import read_meta, transcribe_folder, write_meta
+        folder = Path(folder)
+        if self.meeting_in_use(folder):
+            return
+        try:
+            meta = read_meta(folder)
+            meta["status"] = "transcribing"
+            write_meta(folder, meta)
+        except (OSError, ValueError) as error:
+            log(f"Meeting: could not re-transcribe {folder.name} ({type(error).__name__})")
+            self._settings_status("Couldn't re-transcribe this meeting.", "#FF453A")
+            return
+        self._retranscribing.add(folder)
+        log(f"Meeting: re-transcribing {folder.name}")
+
+        def run():
+            ok = transcribe_folder(folder, lambda: self._engine.speech_model, lambda: self._engine.active,
+                                   self._config.get("language", "en"), log, lambda: self._closing)
+            self._events.put(("action", lambda: self._meeting_done(folder, ok)))
+
+        threading.Thread(target=run, name="meeting-retranscribe", daemon=True).start()
 
     def _open_meetings_folder(self):
         import os

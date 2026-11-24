@@ -348,3 +348,35 @@ def test_mic_and_speaker_on_one_device_need_no_hint():
                              "output": type("O", (), {"name": "Speakers (6- Cirrus Logic XU)"})()})()
     mic, speaker, hint = MeetingSession.devices(session)
     assert (mic, speaker) == ("Microphone (EMEET)", "Speakers (6- Cirrus Logic XU)") and hint
+
+
+def test_library_lists_groups_and_reads_transcripts(tmp_path):
+    import json
+    from datetime import date, datetime
+    from meetings import day_label, display_title, list_meetings, matches, transcript_lines
+    for name, started, title in (("a", "2026-11-21T08:15:00", "Untitled"), ("b", "2026-11-24T13:00:00", "Review")):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "meta.json").write_text(json.dumps(
+            {"title": title, "started": started, "duration_seconds": 60, "status": "done"}), encoding="utf-8")
+    (tmp_path / "b" / "transcript.md").write_text("# Review\n\n**[00:04] Me:** Ship it Thursday.\n", encoding="utf-8")
+    (tmp_path / "broken").mkdir()
+    (tmp_path / "broken" / "meta.json").write_text("{", encoding="utf-8")
+    items = list_meetings(tmp_path)
+    assert [item["title"] for item in items] == ["Review", "Untitled"]
+    assert display_title(items[1]) == "Untitled · 8:15 AM"
+    today = date(2026, 11, 24)
+    assert day_label(datetime(2026, 11, 24, 9), today) == "Today, Nov 24"
+    assert day_label(datetime(2026, 11, 23, 9), today) == "Yesterday, Nov 23"
+    assert day_label(datetime(2026, 11, 21, 9), today) == "Saturday, Nov 21"
+    assert day_label(datetime(2025, 11, 3, 9), today) == "Nov 3, 2025"
+    assert matches(items[0], "thursday") and not matches(items[1], "thursday")
+    assert transcript_lines((tmp_path / "b" / "transcript.md").read_text()) == [("00:04", "Me", "Ship it Thursday.")]
+
+
+def test_trash_folder_moves_a_meeting_to_the_recycle_bin(tmp_path):
+    from meetings import trash_folder
+    folder = tmp_path / "2026-11-24 1300"
+    folder.mkdir()
+    (folder / "meta.json").write_text("{}", encoding="utf-8")
+    assert trash_folder(folder)
+    assert not folder.exists()

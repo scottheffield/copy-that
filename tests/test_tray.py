@@ -24,4 +24,4 @@ def test_left_click_opens_main_window_at_last_page():
     menu(None)  # What pystray runs on a left-click
     assert opened == ["open"]
     visible = [item.text for item in menu.items if item.visible]
-    assert "History" in visible and "Settings" in visible
+    assert "Dictation history" in visible and "Settings" in visible
