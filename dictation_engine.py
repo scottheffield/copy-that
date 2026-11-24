@@ -73,6 +73,8 @@ DEFAULT_CONFIG = {
     "bubble_position": "cursor",     # cursor: open takes at the caret when known; top: the pill's spot
     # Meeting recordings: one folder per meeting. Kept out of synced folders by default.
     "meetings_dir": str(Path.home() / "CopyThat Meetings"),
+    "meeting_chip_position": None,   # [right, top] in screen px once the chip is dragged
+    "meeting_consent_seen": False,   # The consent note shows under the chip until dismissed
 }
 
 # Model registry: pre-exported models from Hugging Face, pinned to tested revisions.

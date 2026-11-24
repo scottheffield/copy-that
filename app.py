@@ -67,6 +67,15 @@ class GUIApp:
         self._overlay.set_balloon_font_size(config.get("balloon_font_size", 16))
         self._overlay.set_bubble_position(config.get("bubble_position", "cursor"))
 
+        # Meeting chip: its own window, so the pill stays free for dictation mid-meeting.
+        from ui.meeting_chip import MeetingChip
+        position = config.get("meeting_chip_position")
+        self._chip = MeetingChip(
+            self._root, on_stop=self._toggle_meeting, on_open=self._open_last_transcript,
+            on_consent_seen=self._consent_seen, on_moved=self._chip_moved,
+            position=tuple(position) if position else None)
+        self._chip_poll_id = None
+
         # Tray
         import startup
         self._tray = TrayManager(
@@ -94,6 +103,7 @@ class GUIApp:
 
     def _refresh_theme(self, mode):
         self._overlay.set_theme(mode)
+        self._chip.set_theme(mode)
         for window in (self._settings_win, self._history_win, self._welcome):
             if window:
                 window.refresh_theme()
@@ -508,8 +518,18 @@ class GUIApp:
         if self._config.get("beep_on_start", True):
             from dictation_engine import chime_start
             chime_start()
-        self._meeting_notice("Recording meeting")
+        self._chip.show_recording(consent=not self._config.get("meeting_consent_seen", False))
+        self._poll_chip()
         self._tray.update_state(self._tray._state)  # Menu text: Stop meeting recording
+
+    def _poll_chip(self):
+        session = self._meeting
+        if not self._meeting_recording():
+            self._chip_poll_id = None
+            return
+        self._chip.update(session.elapsed, *session.levels(), problem=session.problem,
+                          devices=session.devices())
+        self._chip_poll_id = self._root.after(150, self._poll_chip)
 
     def _stop_meeting(self):
         session = self._meeting
@@ -519,13 +539,37 @@ class GUIApp:
         if self._config.get("beep_on_start", True):
             from dictation_engine import chime_stop
             chime_stop()
-        self._meeting_notice("Finishing the transcript")
+        self._chip.show_finishing(session.meta["duration_seconds"])
         self._tray.update_state(self._tray._state)
 
     def _meeting_done(self, folder, ok):
         log(f"Meeting: transcript {'saved' if ok else 'not finished'} in {folder.name}")
-        if ok:
-            self._meeting_notice("Meeting transcript saved")
+        if self._meeting and self._meeting.folder == folder and self._chip.state == "finishing":
+            self._chip.show_ready() if ok else self._chip.show_failed()
+
+    def _open_last_transcript(self):
+        import os
+        if not self._meeting:
+            return
+        target = self._meeting.folder / "transcript.md"
+        try:
+            os.startfile(target if target.exists() else self._meeting.folder)
+        except OSError as error:
+            log(f"Meeting: could not open the transcript ({type(error).__name__})")
+
+    def _consent_seen(self):
+        self._config["meeting_consent_seen"] = True
+        self._save_quietly()
+
+    def _chip_moved(self, position):
+        self._config["meeting_chip_position"] = list(position)
+        self._save_quietly()
+
+    def _save_quietly(self):
+        try:
+            save_config(self._config)
+        except (OSError, ValueError) as error:
+            log(f"Could not save settings ({type(error).__name__})")
 
     def _open_meetings_folder(self):
         import os

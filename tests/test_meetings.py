@@ -233,3 +233,118 @@ def test_recording_in_progress_is_left_alone(tmp_path):
     meetings.write_meta(folder, {**META, "status": "recording"})
     assert unfinished(tmp_path, skip=folder) == []
     assert meetings.read_meta(folder)["status"] == "recording"
+
+
+class FakeStream:
+    def __init__(self, device, callback):
+        self.device, self.callback, self.running = device, callback, True
+
+    def start_stream(self):
+        pass
+
+    def stop_stream(self):
+        self.running = False
+
+    def close(self):
+        pass
+
+
+class FakePyAudio:
+    """PyAudioWPatch's surface as OutputCapture uses it. Its device list is fixed
+    when created, like PortAudio's."""
+    paFloat32, paContinue = 1, 0
+    plugged = ["Speakers (EMEET)", "Speakers (Laptop)"]
+    instances = []
+
+    def __init__(self):
+        self.devices = [{"name": f"{n} [Loopback]", "index": i, "defaultSampleRate": 48000,
+                         "maxInputChannels": 2} for i, n in enumerate(list(self.plugged))]
+        self.streams = []
+        FakePyAudio.instances.append(self)
+
+    @classmethod
+    def PyAudio(cls):
+        return cls()
+
+    def get_loopback_device_info_generator(self):
+        return iter(self.devices)
+
+    def open(self, input_device_index, stream_callback, **kwargs):
+        stream = FakeStream(self.devices[input_device_index]["name"], stream_callback)
+        self.streams.append(stream)
+        return stream
+
+    def terminate(self):
+        pass
+
+
+class FakeSpeaker:
+    current = "Speakers (EMEET)"
+
+    def name(self):
+        return FakeSpeaker.current
+
+
+def test_output_follows_a_switch_portaudio_never_sees(tmp_path):
+    from meetings import OutputCapture
+    FakePyAudio.instances, FakeSpeaker.current = [], "Speakers (EMEET)"
+    track = WavTrack(tmp_path / "others.wav")
+    output = OutputCapture(track, log=lambda m: None, pa_module=FakePyAudio, default_speaker=FakeSpeaker)
+    output.start()
+    assert output.name == "Speakers (EMEET)"
+    FakeSpeaker.current = "Speakers (Laptop)"
+    output._follow(FakeSpeaker())
+    assert output.name == "Speakers (Laptop)" and not output.lost
+    assert output.devices == ["Speakers (EMEET)", "Speakers (Laptop)"]
+    assert FakePyAudio.instances[0].streams[-1].device == "Speakers (Laptop) [Loopback]"
+    output._stop.set()
+    output.stop()
+    track.close()
+
+
+def test_output_plugged_in_mid_meeting_restarts_portaudio(tmp_path):
+    from meetings import OutputCapture
+    FakePyAudio.instances, FakeSpeaker.current = [], "Speakers (EMEET)"
+    track = WavTrack(tmp_path / "others.wav")
+    output = OutputCapture(track, log=lambda m: None, pa_module=FakePyAudio, default_speaker=FakeSpeaker)
+    output.start()
+    FakePyAudio.plugged = FakePyAudio.plugged + ["Headphones (USB)"]
+    try:
+        FakeSpeaker.current = "Headphones (USB)"
+        output._follow(FakeSpeaker())
+        assert output.name == "Headphones (USB)" and len(FakePyAudio.instances) == 2
+    finally:
+        FakePyAudio.plugged = FakePyAudio.plugged[:-1]
+    output._stop.set()
+    output.stop()
+    track.close()
+
+
+def test_output_that_cannot_be_recorded_is_reported(tmp_path):
+    from meetings import OutputCapture
+    FakePyAudio.instances, FakeSpeaker.current = [], "Speakers (EMEET)"
+    track = WavTrack(tmp_path / "others.wav")
+    output = OutputCapture(track, log=lambda m: None, pa_module=FakePyAudio, default_speaker=FakeSpeaker)
+    output.start()
+    FakeSpeaker.current = "Bluetooth (gone)"
+    output._follow(FakeSpeaker())
+    assert output.lost
+    session = type("S", (), {"output": output, "mic": None})()
+    assert MeetingSession.problem.fget(session) == "Not recording the other side"
+    FakeSpeaker.current = "Speakers (EMEET)"
+    output._follow(FakeSpeaker())
+    assert not output.lost
+    output._stop.set()
+    output.stop()
+    track.close()
+
+
+def test_mic_and_speaker_on_one_device_need_no_hint():
+    from audio_endpoints import same_device
+    assert same_device("Microphone (EMEET OfficeCore M0 Plus)", "Speakers (EMEET OfficeCore M0 Plus)")
+    assert same_device("Headset Microphone (2- Jabra Evolve2)", "Headphones (Jabra Evolve2)")
+    assert not same_device("Microphone Array (Intel® Smart Sound Technology)", "Speakers (6- Cirrus Logic XU)")
+    session = type("S", (), {"mic": type("M", (), {"name": "Microphone (EMEET)"})(),
+                             "output": type("O", (), {"name": "Speakers (6- Cirrus Logic XU)"})()})()
+    mic, speaker, hint = MeetingSession.devices(session)
+    assert (mic, speaker) == ("Microphone (EMEET)", "Speakers (6- Cirrus Logic XU)") and hint

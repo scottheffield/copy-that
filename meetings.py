@@ -183,9 +183,12 @@ class Level:
 class MicCapture:
     """The microphone dictation uses, through sounddevice at 16 kHz."""
 
+    SILENT_SECONDS = 5  # Exact zeros this long means the mic delivers nothing
+
     def __init__(self, track, device=None, log=print):
         self.track, self.level, self._log = track, Level(), log
         self._device = device
+        self._last_sound = None
         self._blocks = []
         self._lock = threading.Lock()
         self._stream = None
@@ -207,12 +210,23 @@ class MicCapture:
                                       extra_settings=_wasapi_convert(sd, device))
         self._stream.start()
         try:
-            self.name = sd.query_devices(device)["name"] if self._device is not None else None
+            if self._device is not None:
+                self.name = sd.query_devices(device)["name"]
+            else:  # The sound mapper opened Windows' default; ask Windows which one that is.
+                from audio_endpoints import DefaultMicrophone
+                self.name = DefaultMicrophone().name()
         except Exception:
             self.name = None
         self.name = self.name or "Windows default microphone"
         self._log(f"Meeting: microphone {self.name}")
+        self._last_sound = time.monotonic()
         self._writer.start()
+
+    @property
+    def silent(self):
+        """True when the mic has sent only exact zeros (or nothing) for SILENT_SECONDS.
+        A quiet room still has noise; a muted or dead device sends zeros."""
+        return self._last_sound is not None and time.monotonic() - self._last_sound > self.SILENT_SECONDS
 
     def _drain(self):
         while not self._stop.wait(0.2):
@@ -225,6 +239,8 @@ class MicCapture:
         for block in blocks:
             self.level.add(block)
             self.track.append(block)
+            if block.any():
+                self._last_sound = time.monotonic()
 
     def stop(self):
         if self._stream:
@@ -244,16 +260,23 @@ class OutputCapture:
     The capture spike chose PyAudioWPatch: it kept the exact rate, where
     soundcard ran 0.5-0.7% fast. Loopback delivers nothing while nothing
     plays, so silence is filled from the wall clock to keep this track in
-    step with the microphone. It follows a change of Windows' default output.
+    step with the microphone.
+
+    It follows a change of Windows' default output. PortAudio reads its device
+    list once, so the current default comes from Windows (audio_endpoints),
+    and PortAudio is restarted on a switch so a newly plugged device is found.
     """
 
     FOLLOW_SECONDS = 0.5
     STALL_SECONDS = 0.4
 
-    def __init__(self, track, log=print):
+    def __init__(self, track, log=print, pa_module=None, default_speaker=None):
         self.track, self.level, self._log = track, Level(), log
         self.devices = []  # Every output recorded from, in order
         self.name = None
+        self.lost = False  # True while the default output can't be recorded
+        self._pa_module = pa_module
+        self._speaker_factory = default_speaker
         self._pa = None
         self._stream = None
         self._resample = None
@@ -264,23 +287,32 @@ class OutputCapture:
         self._started = None
         self._thread = threading.Thread(target=self._run, name="meeting-output", daemon=True)
 
+    def _speaker(self):
+        """A reader of Windows' default speaker for the calling thread."""
+        if self._speaker_factory is not None:
+            return self._speaker_factory()
+        from audio_endpoints import DefaultSpeaker
+        return DefaultSpeaker()
+
     def start(self):
-        import pyaudiowpatch as pa
-        self._pa_module = pa
-        self._pa = pa.PyAudio()
-        self._open()
+        if self._pa_module is None:
+            import pyaudiowpatch
+            self._pa_module = pyaudiowpatch
+        self._pa = self._pa_module.PyAudio()
+        self._open(self._speaker().name())
         self._started = time.monotonic()
         self._thread.start()
 
-    def _default_output(self):
-        pa = self._pa_module
-        wasapi = self._pa.get_host_api_info_by_type(pa.paWASAPI)
-        return self._pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
-
-    def _open(self):
-        speaker = self._default_output()
-        device = next(d for d in self._pa.get_loopback_device_info_generator()
-                      if d["name"].startswith(speaker["name"]))
+    def _open(self, speaker_name):
+        devices = list(self._pa.get_loopback_device_info_generator())
+        device = next((d for d in devices if d["name"].startswith(speaker_name)), None)
+        if device is None:
+            # Plugged in after PortAudio started: restart it to see the device.
+            self._pa.terminate()
+            self._pa = self._pa_module.PyAudio()
+            device = next(d for d in self._pa.get_loopback_device_info_generator()
+                          if d["name"].startswith(speaker_name))
+        speaker = {"name": speaker_name}
         rate = int(device["defaultSampleRate"])
         self._channels = max(1, int(device["maxInputChannels"]))
         self._resample = Resampler(rate)
@@ -310,20 +342,53 @@ class OutputCapture:
             self._stream = None
 
     def _run(self):
+        com = None
+        try:
+            import comtypes
+            comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+            com = comtypes
+        except Exception:
+            pass
+        try:
+            speaker = self._speaker()
+        except Exception as error:
+            speaker = None
+            self._log(f"Meeting: can't watch the default output ({type(error).__name__})")
         next_check = time.monotonic() + self.FOLLOW_SECONDS
         while not self._stop.wait(0.1):
             self._flush()
-            if time.monotonic() >= next_check:
-                next_check = time.monotonic() + self.FOLLOW_SECONDS
-                try:
-                    if self._default_output()["name"] != self.name:
-                        self._log("Meeting: default output changed; following it")
-                        self._close_stream()
-                        self._flush()
-                        self._open()
-                except Exception as error:
-                    self._log(f"Meeting: could not follow the output ({type(error).__name__})")
+            if speaker is None or time.monotonic() < next_check:
+                continue
+            next_check = time.monotonic() + self.FOLLOW_SECONDS
+            self._follow(speaker)
         self._flush()
+        if com is not None:
+            try:
+                com.CoUninitialize()
+            except Exception:
+                pass
+
+    def _follow(self, speaker):
+        """Switch to Windows' default output if it changed, or retry one that failed."""
+        try:
+            name = speaker.name()
+        except Exception as error:
+            self._log(f"Meeting: could not read the default output ({type(error).__name__})")
+            return
+        if not name or (name == self.name and not self.lost):
+            return
+        if name != self.name:
+            self._log("Meeting: default output changed; following it")
+        self._close_stream()
+        self._flush()
+        try:
+            self._open(name)
+            self.lost = False
+        except Exception as error:
+            if not self.lost:
+                self._log(f"Meeting: could not record from the new output ({type(error).__name__})")
+            self.lost = True
+            self.name = name
 
     def _flush(self):
         with self._lock:
@@ -336,6 +401,7 @@ class OutputCapture:
         expected = (time.monotonic() - self._started) * RATE
         if not blocks and expected - len(self.track) > self.STALL_SECONDS * RATE:
             self.track.append_silence(expected - len(self.track) - 0.1 * RATE)
+            self.level.rms = 0.0  # Nothing playing: the meter drops instead of holding its last value
 
     def stop(self):
         self._stop.set()
@@ -585,6 +651,28 @@ class MeetingSession:
     @property
     def elapsed(self):
         return 0 if self._t0 is None else time.monotonic() - self._t0
+
+    def levels(self):
+        """(me, others) on a 0-1 scale for the chip's meters; speech is roughly 0.01-0.05 RMS."""
+        scale = lambda rms: min(1.0, rms * 25.0)
+        return scale(self.mic.level.rms), scale(self.output.level.rms)
+
+    def devices(self):
+        """(mic, speaker, hint) for the chip. The hint is set when they are different
+        hardware: if the call plays out loud, the mic (and dictation) may hear it."""
+        from audio_endpoints import same_device
+        mic, speaker = getattr(self.mic, "name", None), getattr(self.output, "name", None)
+        hint = None
+        if mic and speaker and not same_device(mic, speaker):
+            hint = "Separate mic and speaker: if the call plays out loud, dictation may hear it."
+        return mic, speaker, hint
+
+    @property
+    def problem(self):
+        """A short message for the chip, or None."""
+        if getattr(self.output, "lost", False):
+            return "Not recording the other side"
+        return "No sound from your mic" if getattr(self.mic, "silent", False) else None
 
     def start(self):
         self.mic.start()
