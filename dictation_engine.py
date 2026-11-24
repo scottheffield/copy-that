@@ -72,6 +72,7 @@ DEFAULT_CONFIG = {
     "input_device": None,
     "dictation_priority": "above_normal",  # normal, above_normal, high: only from hotkey to paste
     "bubble_position": "cursor",     # cursor: open takes at the caret when known; top: the pill's spot
+    "main_window_page": "General",   # Page the tray's left-click reopens: History or a settings page
 }
 
 # Model registry: pre-exported models from Hugging Face, pinned to tested revisions.
