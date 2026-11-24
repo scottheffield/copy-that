@@ -9,7 +9,7 @@ import pytest
 
 from dictation_engine import (
     MODEL_REGISTRY, DictationApp, DEFAULT_CONFIG,
-    create_model, ParakeetNPU, WhisperNPU,
+    create_model, ParakeetModel, WhisperModel,
     LANGUAGES, get_models_for_language, is_model_downloaded, MODEL_DIR,
 )
 
@@ -41,13 +41,13 @@ class TestParakeetRegistry:
 class TestCreateModel:
     """Verify factory function dispatches correctly."""
 
-    @patch("dictation_engine.WhisperNPU")
+    @patch("dictation_engine.WhisperModel")
     def test_creates_whisper_for_whisper_backend(self, mock_cls):
         mock_cls.return_value = MagicMock()
         result = create_model(Path("/fake"), device="NPU", backend="whisper")
         mock_cls.assert_called_once_with(Path("/fake"), device="NPU")
 
-    @patch("dictation_engine.ParakeetNPU")
+    @patch("dictation_engine.ParakeetModel")
     def test_creates_parakeet_for_parakeet_backend(self, mock_cls):
         mock_cls.return_value = MagicMock()
         result = create_model(Path("/fake"), device="NPU", backend="parakeet")
