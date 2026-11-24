@@ -30,6 +30,7 @@ packaging==26.3
 pillow==12.3.0
 pluggy==1.6.0
 protobuf==7.36.2
+PyAudioWPatch==0.2.12.9
 pycparser==3.11
 Pygments==2.21.0
 pyperclip==1.11.0

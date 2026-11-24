@@ -71,6 +71,8 @@ DEFAULT_CONFIG = {
     "input_device": None,
     "dictation_priority": "above_normal",  # normal, above_normal, high: only from hotkey to paste
     "bubble_position": "cursor",     # cursor: open takes at the caret when known; top: the pill's spot
+    # Meeting recordings: one folder per meeting. Kept out of synced folders by default.
+    "meetings_dir": str(Path.home() / "CopyThat Meetings"),
 }
 
 # Model registry: pre-exported models from Hugging Face, pinned to tested revisions.

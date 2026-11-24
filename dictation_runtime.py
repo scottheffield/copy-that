@@ -56,6 +56,7 @@ class DictationRuntime:
         self._load_thread = None
         self._command_thread = None
         self._load_generation = 0
+        self.meeting_active = False  # Set by the app while a meeting is being recorded
 
     @property
     def recorder(self):
@@ -77,6 +78,13 @@ class DictationRuntime:
     @property
     def state(self):
         return self._state
+
+    @property
+    def speech_model(self):
+        """The loaded speech model, or None while loading or after a failed load."""
+        if self._model_ready.is_set() and not self._load_error and not self._stopped.is_set():
+            return self.whisper
+        return None
 
     @property
     def history(self):
@@ -139,8 +147,8 @@ class DictationRuntime:
 
     def _pause_media(self, recording):
         """Pause what is playing while the mic is open; resume only that."""
-        if recording and not self.config.get("pause_media", True):
-            return
+        if recording and (not self.config.get("pause_media", True) or self.meeting_active):
+            return  # During a meeting recording, the call's audio must keep playing.
         if self._media is None:
             from media_pause import MediaPause
             self._media = MediaPause(self.log)
