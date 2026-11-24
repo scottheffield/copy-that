@@ -8,7 +8,7 @@ from ui.icons import STATE_ICONS
 class TrayManager:
     """Manages the system tray icon and context menu."""
 
-    def __init__(self, on_toggle, on_quit, on_settings=None, on_history=None,
+    def __init__(self, on_toggle, on_quit, on_settings=None, on_history=None, on_open=None,
                  device="GPU", model="parakeet", hotkey="ctrl+win",
                  on_startup=None, startup_enabled=None,
                  on_meeting=None, meeting_recording=None, on_meetings_folder=None):
@@ -19,6 +19,7 @@ class TrayManager:
         self._on_quit = on_quit
         self._on_settings = on_settings
         self._on_history = on_history
+        self._on_open = on_open
         self._on_startup = on_startup
         self._startup_enabled = startup_enabled
         self._device = device
@@ -51,8 +52,13 @@ class TrayManager:
             items.append(pystray.MenuItem("History", lambda: self._on_history()))
 
         if self._on_settings:
-            # Left-click opens Settings; recording starts from the hotkey or this menu.
-            items.append(pystray.MenuItem("Settings", lambda: self._on_settings(), default=True))
+            items.append(pystray.MenuItem("Settings", lambda: self._on_settings(),
+                                          default=self._on_open is None))
+        if self._on_open:
+            # Left-click opens the main window at the last page used; it never starts a
+            # recording. Hidden from the menu, which already has History and Settings.
+            items.append(pystray.MenuItem("Open CopyThat", lambda: self._on_open(),
+                                          default=True, visible=False))
         if self._on_startup:
             items.append(pystray.MenuItem("Start with Windows", lambda: self._on_startup(),
                                           checked=lambda _: self._startup_enabled()))

@@ -7,7 +7,6 @@ import pytest
 from dictation_engine import DEFAULT_CONFIG, validate_config
 from ui.theme import ThemeController
 from ui.settings import SettingsWindow
-from ui.history import HistoryWindow
 from ui.overlay import OverlayWindow
 
 
@@ -82,14 +81,50 @@ def test_theme_keeps_active_pill_geometry_and_state(root):
 
 def test_history_both_themes_and_empty_state(root):
     for entries in ([], [{"text": "Sample transcript " * 80, "raw": "raw", "duration": 3}]):
-        history = HistoryWindow(root, entries)
-        history.show()
+        window = SettingsWindow(root, dict(DEFAULT_CONFIG), [], history=lambda e=entries: e)
+        window.show("History")
         for mode in ("light", "dark"):
             ctk.set_appearance_mode(mode)
-            history.refresh_theme()
+            window.refresh_theme()
             root.update_idletasks()
-            assert history.is_open
-        history._win.destroy()
+            assert window.is_open and window.page == "History"
+        window._win.destroy()
+
+
+def test_one_window_apply_only_on_settings_pages(root):
+    pages, entries = [], [{"text": "First take", "raw": "first take", "duration": 1}]
+    window = SettingsWindow(root, dict(DEFAULT_CONFIG), [], history=lambda: entries,
+                            on_page_change=pages.append)
+    window.show()
+    root.update_idletasks()
+    assert window._win.title() == "CopyThat"
+    assert window.page == "General" and window._apply_btn.winfo_manager() == "pack"
+    window.show("History")
+    root.update_idletasks()
+    assert window.page == "History" and window._apply_btn.winfo_manager() == ""
+    labels = [w.cget("text") for w in window._pages["History"].winfo_children()[-1].winfo_children()
+              if isinstance(w, ctk.CTkLabel)]
+    assert "First take" in labels
+    entries.append({"text": "Second take", "raw": "second take", "duration": 1})
+    window._select_page("General")
+    window._select_page("History")
+    newest = window._pages["History"].winfo_children()[3]
+    assert "Second take" in [w.cget("text") for w in newest.winfo_children() if isinstance(w, ctk.CTkLabel)]
+    window._select_page("Dictionary")
+    assert window._apply_btn.winfo_manager() == "pack"
+    assert pages == ["General", "History", "General", "History", "Dictionary"]
+    window._win.destroy()
+
+
+def test_window_reopens_at_last_page(root):
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "History"}, [])
+    window.show()
+    assert window.page == "History"
+    window._win.destroy()
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "Gone"}, [])
+    window.show()
+    assert window.page == "General"
+    window._win.destroy()
 
 
 def test_theme_validation():

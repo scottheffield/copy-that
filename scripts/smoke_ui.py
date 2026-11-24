@@ -9,7 +9,6 @@ from PIL import ImageGrab
 from dictation_engine import DEFAULT_CONFIG
 from ui.settings import SettingsWindow
 from ui.overlay import OverlayWindow
-from ui.history import HistoryWindow
 
 
 def main():
@@ -19,7 +18,9 @@ def main():
     output.mkdir(exist_ok=True)
     config = {**DEFAULT_CONFIG, "input_device": 7, "beep_on_start": False}
     devices = [{"index": 3, "name": "Sample laptop microphone"}, {"index": 7, "name": "Sample USB microphone"}]
-    settings = SettingsWindow(root, config, devices)
+    history = [{"text": "Please check the build.", "raw": "please check the build",
+        "status": "retained", "timestamp": "2026-10-10T19:00:00", "duration": 3.2}]
+    settings = SettingsWindow(root, config, devices, history=lambda: history)
     settings.show()
     root.update()
     assert settings._mic_var.get() == "Sample USB microphone"
@@ -46,12 +47,9 @@ def main():
         window = settings._win
         x, y, w, h = window.winfo_rootx(), window.winfo_rooty(), window.winfo_width(), window.winfo_height()
         ImageGrab.grab(bbox=(x, y, x+w, y+h)).save(output / "settings-preview.png")
-        window.destroy()
-        history = HistoryWindow(root, [{"text": "Please check the build.", "raw": "please check the build",
-            "status": "retained", "timestamp": "2026-10-10T19:00:00", "duration": 3.2}])
-        history.show()
+        settings.show("History")
         def capture_history():
-            window = history._win
+            window = settings._win
             x, y, w, h = window.winfo_rootx(), window.winfo_rooty(), window.winfo_width(), window.winfo_height()
             ImageGrab.grab(bbox=(x, y, x+w, y+h)).save(output / "history-preview.png")
             window.destroy()

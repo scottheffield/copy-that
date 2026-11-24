@@ -76,6 +76,7 @@ DEFAULT_CONFIG = {
     "meetings_dir": str(Path.home() / "CopyThat Meetings"),
     "meeting_chip_position": None,   # [right, top] in screen px once the chip is dragged
     "meeting_consent_seen": False,   # The consent note shows under the chip until dismissed
+    "main_window_page": "General",   # Page the tray's left-click reopens: History or a settings page
 }
 
 # Model registry: pre-exported models from Hugging Face, pinned to tested revisions.

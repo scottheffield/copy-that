@@ -1,4 +1,4 @@
-"""CopyThat settings, grouped by task with shared light and dark colors."""
+"""The main CopyThat window: History plus settings grouped by task, in shared light and dark colors."""
 
 import customtkinter as ctk
 import tkinter as tk
@@ -103,11 +103,15 @@ def _make_wide_dropdown(om, values, on_select):
     om._open_dropdown_menu = _open
 
 
+SETTINGS_PAGES = ("General", "Speech", "Dictionary", "Advanced")
+PAGES = ("History",) + SETTINGS_PAGES
+
+
 class SettingsWindow:
-    """Modal-ish settings dialog with language-first model selection."""
+    """The main window. History sits above the settings pages; Apply shows only on settings pages."""
 
     def __init__(self, root: ctk.CTk, config: dict, input_devices: list[dict],
-                 on_apply=None, models=None):
+                 on_apply=None, models=None, history=None, on_page_change=None):
         """
         Args:
             root: Parent CTk window.
@@ -116,12 +120,17 @@ class SettingsWindow:
             on_apply: Callback(new_config) called when user clicks Apply.
             models: Provides model_state, download_model, cancel_download and
                 remove_model(kind, key). Without it, cards only show what is installed.
+            history: Callable returning this session's takes for the History page.
+            on_page_change: Callback(page_name) so the app can reopen at the last page.
         """
         self._root = root
         self._config = dict(config)
         self._input_devices = input_devices
         self._on_apply = on_apply
         self._models = models
+        self._history = history or (lambda: [])
+        self._on_page_change = on_page_change
+        self._page = None
         self._win: ctk.CTkToplevel | None = None
         self._model_radio_var = ctk.StringVar(value=config.get("model_size", "base"))
         self._model_rows_frame: ctk.CTkFrame | None = None
@@ -132,13 +141,23 @@ class SettingsWindow:
     def is_open(self) -> bool:
         return self._win is not None and self._win.winfo_exists()
 
-    def show(self):
+    @property
+    def page(self):
+        return self._page
+
+    def show(self, page=None):
+        """Open the window, or bring it forward, at page (default: the last page used)."""
         if self._win is not None and self._win.winfo_exists():
+            if page:
+                self._select_page(page)
+            self._win.deiconify()
+            self._win.lift()
             self._win.focus_force()
             return
+        requested = page  # The page loop below reuses the name
 
         self._win = ctk.CTkToplevel(self._root)
-        self._win.title("CopyThat — Settings")
+        self._win.title("CopyThat")
         from ui import screen
         screen.place(self._win, 760, 760, 720, 620)  # Shrinks to fit a short or scaled screen
         self._win.configure(fg_color=_CONTENT_BG)
@@ -172,10 +191,6 @@ class SettingsWindow:
             header, text="CopyThat", fg_color="transparent",
             font=ctk.CTkFont(size=14, weight="bold"), text_color=theme.TEXT,
         ).pack(side="left", padx=(8, 0))
-        ctk.CTkLabel(
-            header, text="Settings", fg_color="transparent",
-            font=ctk.CTkFont(size=12), text_color=_DESC_TEXT,
-        ).pack(side="left", padx=(8, 0))
 
         pad = {"padx": 20, "pady": (10, 0)}
 
@@ -203,12 +218,12 @@ class SettingsWindow:
             btn_frame, text="Apply changes", command=self._apply, width=100,
             fg_color=_ACCENT, hover_color=_ACCENT_HOVER, text_color=theme.ON_ACCENT,
         )
-        self._apply_btn.pack(side="right", padx=(8, 0))
-        ctk.CTkButton(
+        self._close_btn = ctk.CTkButton(
             btn_frame, text="Close", command=self._win.destroy, width=100,
             fg_color=_BTN_SEC_BG, hover_color=_BTN_SEC_HOVER,
             text_color=_BTN_SEC_TEXT, border_color=_CARD_BORDER, border_width=1,
-        ).pack(side="right")
+        )
+        self._close_btn.pack(side="right")
 
         body = ctk.CTkFrame(self._win, fg_color=_CONTENT_BG)
         body.pack(fill="both", expand=True)
@@ -218,6 +233,15 @@ class SettingsWindow:
         container = ctk.CTkFrame(body, fg_color=_CONTENT_BG)
         container.pack(side="left", fill="both", expand=True)
         self._pages, self._nav_buttons = {}, {}
+        history_page = ctk.CTkScrollableFrame(container, fg_color=_CONTENT_BG,
+            scrollbar_button_color=_CARD_BORDER, scrollbar_button_hover_color=_INPUT_BORDER)
+        self._pages["History"] = history_page
+        button = ctk.CTkButton(sidebar, text="History", anchor="w", width=116,
+            height=36, fg_color="transparent", hover_color=theme.SELECTED,
+            text_color=theme.TEXT, command=lambda: self._select_page("History"))
+        button.pack(padx=12, pady=(16, 3))
+        self._nav_buttons["History"] = button
+        ctk.CTkFrame(sidebar, height=1, fg_color=_CARD_BORDER).pack(fill="x", padx=16, pady=6)
         descriptions = {
             "General": "Make yourself heard. Set up your everyday dictation.",
             "Speech": "Choose how your words become text.",
@@ -232,13 +256,12 @@ class SettingsWindow:
             button = ctk.CTkButton(sidebar, text=name, anchor="w", width=116,
                 height=36, fg_color="transparent", hover_color=theme.SELECTED,
                 text_color=theme.TEXT, command=lambda n=name: self._select_page(n))
-            button.pack(padx=12, pady=(16 if name == "General" else 3, 3))
+            button.pack(padx=12, pady=3)
             self._nav_buttons[name] = button
             ctk.CTkLabel(page, text=name, text_color=theme.TEXT,
                 font=ctk.CTkFont(size=25, weight="bold")).pack(anchor="w", padx=20, pady=(20, 2))
             ctk.CTkLabel(page, text=description, text_color=theme.MUTED,
                 wraplength=460, justify="left").pack(anchor="w", padx=20, pady=(0, 12))
-        self._select_page("General")
         scroll = self._pages["General"]
         ctk.CTkLabel(scroll, text="Appearance", text_color=theme.TEXT,
             font=ctk.CTkFont(size=13, weight="bold")).pack(**pad, anchor="w")
@@ -495,11 +518,28 @@ class SettingsWindow:
         _make_wide_dropdown(self._priority_dropdown, list(self._priority_choices), None)
         _make_wide_dropdown(self._bubble_dropdown, list(self._bubble_choices), None)
 
+        last = self._config.get("main_window_page")
+        self._select_page(requested or (last if last in PAGES else "General"))
+
     def _select_page(self, name):
+        if name not in self._pages:
+            name = "General"
         for key, page in self._pages.items():
             page.pack_forget()
             self._nav_buttons[key].configure(fg_color=theme.SELECTED if key == name else "transparent")
+        if name == "History":
+            from ui.history import build_history_page
+            build_history_page(self._pages[name], self._root, list(self._history()))
+        if name in SETTINGS_PAGES:
+            self._apply_btn.pack(side="right", padx=(8, 0), before=self._close_btn)
+        else:
+            self._apply_btn.pack_forget()
         self._pages[name].pack(fill="both", expand=True)
+        if name != self._page:
+            self._page = name
+            self._config["main_window_page"] = name
+            if self._on_page_change:
+                self._on_page_change(name)
 
     def refresh_theme(self):
         if self.is_open:

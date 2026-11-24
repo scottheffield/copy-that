@@ -24,7 +24,6 @@ from version import VERSION, label as version_label
 from ui.tray import TrayManager
 from ui.overlay import OverlayWindow
 from ui.settings import SettingsWindow
-from ui.history import HistoryWindow
 
 
 class GUIApp:
@@ -83,6 +82,7 @@ class GUIApp:
             on_quit=lambda: self._events.put(("action", self._quit)),
             on_settings=lambda: self._events.put(("action", self._show_settings)),
             on_history=lambda: self._events.put(("action", self._show_history)),
+            on_open=lambda: self._events.put(("action", self._show_main)),
             device=config["device"],
             model=config["model_size"],
             hotkey=config["hotkey"],
@@ -95,7 +95,6 @@ class GUIApp:
 
         # Lazy-created windows
         self._settings_win: SettingsWindow | None = None
-        self._history_win: HistoryWindow | None = None
         self._audio_poll_id = None
         from ui.theme import ThemeController
         self._theme_controller = ThemeController(self._root, config.get("theme", "system"), self._refresh_theme)
@@ -104,7 +103,7 @@ class GUIApp:
     def _refresh_theme(self, mode):
         self._overlay.set_theme(mode)
         self._chip.set_theme(mode)
-        for window in (self._settings_win, self._history_win, self._welcome):
+        for window in (self._settings_win, self._welcome):
             if window:
                 window.refresh_theme()
 
@@ -381,17 +380,34 @@ class GUIApp:
             self._root.after_cancel(self._audio_poll_id)
             self._audio_poll_id = None
 
-    # -- Settings ----------------------------------------------------------
+    # -- Main window (History and Settings) ---------------------------------
 
-    def _show_settings(self):
+    def _show_main(self, page=None):
+        """Open the main window at page, or at the last page used."""
         if self._settings_win and self._settings_win.is_open:
-            self._settings_win.show()
+            self._settings_win.show(page)
             return
         devices = DictationApp.list_input_devices()
         self._settings_win = SettingsWindow(
             self._root, self._config, devices, on_apply=self._on_settings_apply, models=self,
+            history=lambda: self._engine.history, on_page_change=self._on_page_change,
         )
-        self._root.after(0, self._settings_win.show)
+        self._root.after(0, lambda: self._settings_win.show(page))
+
+    def _show_settings(self):
+        self._show_main("General")
+
+    def _show_history(self):
+        self._show_main("History")
+
+    def _on_page_change(self, page):
+        if self._config.get("main_window_page") == page:
+            return
+        self._config["main_window_page"] = page
+        try:
+            save_config(self._config)
+        except Exception as error:
+            log(f"Couldn't save the last page: {error}")
 
     def _on_settings_apply(self, new_config: dict):
         try:
@@ -457,15 +473,6 @@ class GUIApp:
         """Enable/disable Apply button in settings window."""
         if self._settings_win and self._settings_win.is_open:
             self._settings_win.set_apply_enabled(enabled)
-
-    # -- History -----------------------------------------------------------
-
-    def _show_history(self):
-        if self._history_win and self._history_win.is_open:
-            self._history_win.show()
-            return
-        self._history_win = HistoryWindow(self._root, self._engine.history)
-        self._root.after(0, self._history_win.show)
 
     # -- Meetings ----------------------------------------------------------
 
