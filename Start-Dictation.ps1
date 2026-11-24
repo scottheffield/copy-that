@@ -119,7 +119,8 @@ function Test-NPUDriver {
         return $true
     } else {
         Write-Host "  NPU device not found in Device Manager." -ForegroundColor Yellow
-        Write-Host "  This could mean:" -ForegroundColor Yellow
+        Write-Host "  Only the Whisper models use the NPU; Parakeet, the default, does not need it." -ForegroundColor Yellow
+        Write-Host "  If you expected one, this could mean:" -ForegroundColor Yellow
         Write-Host "    - Your CPU does not have an NPU" -ForegroundColor Yellow
         Write-Host "    - NPU driver needs to be installed via Windows Update" -ForegroundColor Yellow
         Write-Host "    - Or manually from Intel: https://www.intel.com/content/www/us/en/download/794734/" -ForegroundColor Yellow
@@ -157,10 +158,10 @@ function Invoke-Setup {
     
     $venvPython = Join-Path (Join-Path $VenvDir "Scripts") "python.exe"
 
-    # 3. Check NPU
+    # 3. Check NPU: informational only. Parakeet, the default, runs on the GPU.
     Write-Host ""
-    Write-Host "Step 3: Checking Intel NPU..." -ForegroundColor Yellow
-    $hasNPU = Test-NPUDriver
+    Write-Host "Step 3: Checking Intel NPU (optional)..." -ForegroundColor Yellow
+    $null = Test-NPUDriver
 
     # 4. Run Python setup
     Write-Host ""
