@@ -19,9 +19,9 @@ def test_stitch_removes_shared_words_and_preserves_unaligned_text():
 
 
 def test_parakeet_long_audio_uses_multiple_bounded_inferences():
-    from dictation_engine import ParakeetNPU
+    from dictation_engine import ParakeetModel
     from unittest.mock import Mock
-    model = ParakeetNPU.__new__(ParakeetNPU)
+    model = ParakeetModel.__new__(ParakeetModel)
     model._transcribe_window = Mock(side_effect=[
         [TimedWord("first", 0), TimedWord("shared", 12.5), TimedWord("words", 13)],
         [TimedWord("shared", .5), TimedWord("words", 1), TimedWord("second", 3)]])

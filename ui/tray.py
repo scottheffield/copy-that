@@ -9,7 +9,7 @@ class TrayManager:
     """Manages the system tray icon and context menu."""
 
     def __init__(self, on_toggle, on_quit, on_settings=None, on_history=None,
-                 device="NPU", model="base", hotkey="ctrl+alt+d",
+                 device="GPU", model="parakeet", hotkey="ctrl+win",
                  on_startup=None, startup_enabled=None,
                  on_meeting=None, meeting_recording=None, on_meetings_folder=None):
         self._on_meeting = on_meeting

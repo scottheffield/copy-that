@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dictation_engine import (
-    DEFAULT_CONFIG, DictationApp, ParakeetNPU, create_model, validate_config,
+    DEFAULT_CONFIG, DictationApp, ParakeetModel, create_model, validate_config,
 )
 
 
@@ -43,8 +43,8 @@ def _load_parakeet(tmp_path, **kwargs):
     compiled = []
     ort = types.SimpleNamespace(InferenceSession=MagicMock())
     with patch.dict(sys.modules, {"openvino": _fake_openvino(compiled), "onnxruntime": ort}), \
-            patch.object(ParakeetNPU, "_load_vocab"):
-        model = ParakeetNPU(tmp_path, device="CPU", **kwargs)
+            patch.object(ParakeetModel, "_load_vocab"):
+        model = ParakeetModel(tmp_path, device="CPU", **kwargs)
     return model, compiled
 
 
@@ -61,7 +61,7 @@ def test_parakeet_decoder_runs_on_the_requested_device(tmp_path):
 
 
 def test_create_model_passes_decoder_device_to_parakeet_only():
-    with patch("dictation_engine.ParakeetNPU") as parakeet, patch("dictation_engine.WhisperNPU") as whisper:
+    with patch("dictation_engine.ParakeetModel") as parakeet, patch("dictation_engine.WhisperModel") as whisper:
         create_model(Path("/fake"), "CPU", "parakeet", decoder_device="CPU")
         create_model(Path("/fake"), "CPU", "whisper", decoder_device="CPU")
     parakeet.assert_called_once_with(Path("/fake"), device="CPU", decoder_device="CPU")

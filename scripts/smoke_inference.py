@@ -5,7 +5,7 @@ import sys
 import time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dictation_engine import MODEL_DIR, CONFIG_DIR, load_config, WhisperNPU
+from dictation_engine import MODEL_DIR, CONFIG_DIR, load_config, WhisperModel
 from cleanup import Cleanup
 import numpy as np
 
@@ -17,7 +17,7 @@ def main():
     if len(sys.argv) > 1:
         config["cleanup_model_path"] = str(MODEL_DIR / sys.argv[1])
     print("Loading resident speech model", flush=True)
-    speech = WhisperNPU(MODEL_DIR / "whisper-base-openvino", "NPU")
+    speech = WhisperModel(MODEL_DIR / "whisper-base-openvino", "NPU")
     print("Loading cleanup model", flush=True)
     cleaner = Cleanup(config)
     cleaner.load()

@@ -1,8 +1,9 @@
 """
-NPU Dictation Engine - Local voice-to-text using OpenVINO on Intel NPU
-Supports Whisper (via openvino_genai) and Parakeet TDT (via OpenVINO + onnxruntime).
+CopyThat dictation engine: local voice-to-text with OpenVINO on Intel hardware.
+Parakeet TDT (OpenVINO + onnxruntime) runs on the GPU by default; Whisper
+models (openvino_genai) prefer the NPU.
 
-Usage: python dictation_engine.py [--setup] [--device NPU|GPU|CPU] [--model base|small|medium|parakeet]
+Usage: python dictation_engine.py [--setup] [--device NPU|GPU|CPU] [--model base|small|medium|turbo|parakeet]
 """
 
 import sys
@@ -35,7 +36,7 @@ DEFAULT_CONFIG = {
     "device_auto": True,       # Use the model's preferred device at launch; false keeps "device"
     "decoder_device": "GPU",   # Parakeet decoder: GPU or CPU
     "cleanup_device": "GPU",   # Polish model: GPU or CPU
-    "model_size": "base",      # base, small, medium (large not supported on NPU)
+    "model_size": "base",      # base, small, medium, turbo, parakeet (see MODEL_REGISTRY)
     "language": "en",          # Language code or "auto"
     "hotkey": "ctrl+win",      # Hold to record; Space locks; Escape cancels
     "auto_enter": False,       # Optional submission in the destination app
@@ -345,7 +346,7 @@ def setup_model(config: dict, **_):
 # ---------------------------------------------------------------------------
 # Whisper pipeline using OpenVINO GenAI
 # ---------------------------------------------------------------------------
-class WhisperNPU:
+class WhisperModel:
     """Whisper speech-to-text using OpenVINO on NPU/GPU/CPU."""
 
     def __init__(self, model_path: Path, device: str = "NPU"):
@@ -427,15 +428,15 @@ class WhisperNPU:
 
 
 # ---------------------------------------------------------------------------
-# Parakeet TDT pipeline using OpenVINO (encoder on NPU, decoder on GPU)
+# Parakeet TDT pipeline using OpenVINO (all on the GPU by default)
 # ---------------------------------------------------------------------------
-class ParakeetNPU:
-    """Parakeet TDT 0.6B speech-to-text using OpenVINO on NPU+GPU.
+class ParakeetModel:
+    """Parakeet TDT 0.6B speech-to-text using OpenVINO.
 
     Architecture:
         nemo128.onnx (onnxruntime CPU) → mel spectrogram
-        encoder-model.onnx (OpenVINO NPU) → encoder features
-        decoder_joint-model.onnx (OpenVINO GPU) → TDT greedy decode
+        encoder-model.onnx (OpenVINO; GPU by default, NPU or CPU allowed) → encoder features
+        decoder_joint-model.onnx (OpenVINO GPU, or CPU) → TDT greedy decode
     """
 
     supports_streaming = True
@@ -660,7 +661,7 @@ class ParakeetNPU:
         return text.strip()
 
     def keep_warm(self):
-        """Short NPU encoder and GPU decoder pass on silence.
+        """Short encoder and decoder pass on silence.
 
         Idle accelerators clock down within seconds; in testing, a
         pass every 2s while recording cut the first window from ~0.71s to
@@ -703,7 +704,7 @@ class ParakeetNPU:
                            cancelled=None):
         """Transcribe audio numpy array to text.
 
-        Same interface as WhisperNPU.transcribe() for drop-in compatibility.
+        Same interface as WhisperModel.transcribe() for drop-in compatibility.
         Note: Parakeet is English-only; language parameter is accepted but ignored.
         """
         import numpy as np
@@ -770,11 +771,11 @@ def create_model(model_path: Path, device: str, backend: str, **parakeet_options
         parakeet_options: Extra Parakeet settings, such as decoder_device. Whisper ignores them.
 
     Returns:
-        WhisperNPU or ParakeetNPU instance.
+        WhisperModel or ParakeetModel instance.
     """
     if backend == "parakeet":
-        return ParakeetNPU(model_path, device=device, **parakeet_options)
-    return WhisperNPU(model_path, device=device)
+        return ParakeetModel(model_path, device=device, **parakeet_options)
+    return WhisperModel(model_path, device=device)
 
 
 # ---------------------------------------------------------------------------
@@ -1269,7 +1270,7 @@ def run_setup():
 # ---------------------------------------------------------------------------
 def main():
     sys.setswitchinterval(0.0002)  # See app.main: keeps the decoder loop responsive.
-    parser = argparse.ArgumentParser(description="NPU Dictation Engine")
+    parser = argparse.ArgumentParser(description="CopyThat dictation engine")
     parser.add_argument("--setup", action="store_true", help="Run first-time setup")
     parser.add_argument("--device", choices=["NPU", "GPU", "CPU"], help="Override device")
     parser.add_argument("--model", choices=list(MODEL_REGISTRY.keys()), help="Model size")

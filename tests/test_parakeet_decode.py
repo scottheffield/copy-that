@@ -1,10 +1,10 @@
 from unittest.mock import Mock
 import numpy as np
-from dictation_engine import ParakeetNPU
+from dictation_engine import ParakeetModel
 
 
 def test_word_times_follow_encoder_frames_without_changing_detokenization():
-    model = ParakeetNPU.__new__(ParakeetNPU)
+    model = ParakeetModel.__new__(ParakeetModel)
     model.vocab = {1: " Hello", 2: " world", 3: "."}
     def decoder(inputs):
         previous = int(inputs["targets"][0, 0])
@@ -23,7 +23,7 @@ def test_word_times_follow_encoder_frames_without_changing_detokenization():
 
 
 def test_encoder_receives_preprocessor_length_instead_of_padded_shape():
-    model = ParakeetNPU.__new__(ParakeetNPU)
+    model = ParakeetModel.__new__(ParakeetModel)
     model.device, model.decoder_device = "NPU", "GPU"
     model._preprocess = Mock(return_value=(np.zeros((1, 128, 101), dtype=np.float32),
                                           np.array([100], dtype=np.int64)))
