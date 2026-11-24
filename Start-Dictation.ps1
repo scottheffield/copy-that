@@ -54,8 +54,8 @@ elseif (-not $env:COPYTHAT_DATA_DIR) { $env:COPYTHAT_DATA_DIR = Join-Path $Scrip
 function Write-Banner {
     Write-Host ""
     Write-Host "  ╔══════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║   NPU Dictation Engine               ║" -ForegroundColor Cyan
-    Write-Host "  ║   Local Whisper on Intel NPU         ║" -ForegroundColor Cyan
+    Write-Host "  ║   CopyThat                           ║" -ForegroundColor Cyan
+    Write-Host "  ║   Local dictation with OpenVINO      ║" -ForegroundColor Cyan
     Write-Host "  ╚══════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
 }

@@ -31,7 +31,7 @@ def main():
                 failed.append("Cleanup model failed to load")
             if app._overlay._win.state() != "withdrawn":
                 failed.append("Idle pill was visible")
-            print("Tray loaded with resident NPU speech and GPU cleanup; Python network calls blocked", flush=True)
+            print("Tray loaded with resident speech and cleanup models; Python network calls blocked", flush=True)
             app._quit()
         else:
             app._root.after(100, check)
