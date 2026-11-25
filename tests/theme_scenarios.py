@@ -537,6 +537,10 @@ def test_speaker_menu_adds_moves_and_renames(root, tmp_path):
     page.show_detail(folder)
     root.update()
     assert "Others \u25be" in page_texts(window._pages["Meetings"])
+    # The menu opens on the release: opened on the press, it lost focus and closed at once.
+    who = next(w for w in all_widgets(window._pages["Meetings"])
+               if isinstance(w, ctk.CTkLabel) and w.cget("text") == "Others \u25be")
+    assert who._label.bind("<ButtonRelease-1>") and not who._label.bind("<Button-1>")
 
     def menu_for(text):
         row = next(r for r in page._rows if r["text"] == text)

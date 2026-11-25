@@ -722,7 +722,9 @@ class MeetingsPage:
             who.grid(row=row, column=1, sticky="nw", padx=(0, 10), pady=(0, 10))
             if data:
                 who.configure(cursor="hand2")
-                who.bind("<Button-1>", lambda _e, w=who, d=data: self._speaker_menu(w, folder, d))
+                # On release, like a button: opened on the press, Windows gave focus back to the
+                # window when the button came up, and the menu closed itself at once.
+                who.bind("<ButtonRelease-1>", lambda _e, w=who, d=data: self._speaker_menu(w, folder, d))
             body = ctk.CTkLabel(preview, text=said, text_color=theme.TEXT, justify="left", anchor="nw",
                                 font=body_font, wraplength=self._body_wrap(preview))
             body.grid(row=row, column=2, sticky="new", pady=(0, 10))
