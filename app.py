@@ -28,6 +28,13 @@ from ui.overlay import OverlayWindow
 from ui.settings import SettingsWindow
 
 
+def interrupted_notice(count):
+    """The launch notification for meetings a quit or crash left unfinished."""
+    if count == 1:
+        return "A meeting didn't finish processing. Open it in Meetings and click Re-transcribe."
+    return f"{count} meetings didn't finish processing. Open them in Meetings and click Re-transcribe."
+
+
 class GUIApp:
     """Main GUI application wiring all components."""
 
@@ -344,7 +351,7 @@ class GUIApp:
                 self._offer_deletes()
             if not self._recovery_started:
                 self._recovery_started = True
-                self._finish_interrupted_meetings()
+                self._note_interrupted_meetings()
 
         elif state == AppState.RECORDING:
             self._tray.update_state(state_name, f"CopyThat {VERSION} — Recording...")
@@ -794,37 +801,39 @@ class GUIApp:
         except OSError as error:
             log(f"Meeting: could not open the meetings folder ({type(error).__name__})")
 
-    def _finish_interrupted_meetings(self):
-        """Transcribe meetings that a quit or crash left without a transcript."""
+    def _note_interrupted_meetings(self):
+        """Mark meetings a quit or crash left unfinished, and say so once (#66).
+
+        Nothing is restarted: work that starts by itself at launch, with no word
+        of why the PC is busy, is a mystery. The meeting says it didn't finish,
+        and Re-transcribe finishes it."""
         import threading
-        from meetings import speakers_unfinished, transcribe_folder, unfinished
+        from meetings import speakers_unfinished, stop_speakers, unfinished
 
         def run():
             try:
                 folders = unfinished(self._config["meetings_dir"],
                                      skip=self._meeting.folder if self._meeting else None)
+                for folder in speakers_unfinished(self._config["meetings_dir"]):
+                    stop_speakers(folder)
+                    folders.append(folder)
             except OSError:
+                return
+            if not folders:
                 return
             for folder in folders:
-                if self._closing:
-                    return
-                current = self._meeting
-                if current and current.folder == folder:
-                    continue  # Started before the model loaded; it is still recording.
-                log(f"Meeting: finishing the transcript for {folder.name}")
-                ok = transcribe_folder(folder, lambda: self._engine.speech_model, lambda: self._engine.active,
-                                       self._config.get("language", "en"), log, lambda: self._closing)
-                self._events.put(("action", lambda f=folder, ok=ok: self._meeting_done(f, ok)))
-            # Speaker labels a quit or crash left unfinished.
-            try:
-                waiting = speakers_unfinished(self._config["meetings_dir"])
-            except OSError:
-                return
-            for folder in waiting:
-                if folder not in folders:
-                    self._events.put(("action", lambda f=folder: self._find_speakers_later(f)))
+                log(f"Meeting: {folder.name} didn't finish; Re-transcribe finishes it")
+            message = interrupted_notice(len(folders))
+            self._events.put(("action", lambda: self._notify(message)))
+            self._events.put(("action", self._refresh_meetings))
 
         threading.Thread(target=run, name="meeting-recovery", daemon=True).start()
+
+    def _notify(self, message):
+        try:
+            self._tray._icon.notify(message, "CopyThat")
+        except Exception as error:
+            log(f"Could not show a notification ({type(error).__name__})")
 
     # -- Quit --------------------------------------------------------------
 

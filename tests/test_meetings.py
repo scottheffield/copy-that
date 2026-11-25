@@ -214,7 +214,7 @@ def test_session_writes_folder_transcript_and_meta(tmp_path):
     assert "Me:" in transcript and "Others:" in transcript
 
 
-def test_interrupted_meeting_is_finished_on_next_launch(tmp_path):
+def test_interrupted_meeting_is_marked_and_re_transcribe_finishes_it(tmp_path):
     folder = new_folder(tmp_path, datetime(2026, 11, 23, 9, 0))
     for name in ("mic.wav", "others.wav"):
         filled_track(folder, name, 2).close()
