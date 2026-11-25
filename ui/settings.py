@@ -589,6 +589,11 @@ class SettingsWindow:
         if self.is_open and self._page == "Meetings" and self._meetings_page:
             self._meetings_page.render()
 
+    def meeting_moved(self, old, new):
+        """A meeting's folder was renamed: the Meetings page follows it."""
+        if self._meetings_page:
+            self._meetings_page.meeting_moved(old, new)
+
     def show_meeting(self, folder):
         """Open the Meetings page at one meeting's detail."""
         self.show("Meetings")
