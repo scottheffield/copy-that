@@ -745,7 +745,7 @@ def read_words(folder):
 # -- Speaker names (#44) ---------------------------------------------------------
 #
 # speakers.json keeps who said each word and the names given to speakers:
-#   {"labels": {"others": ["Speaker 1", ...]}, "names": {"Speaker 1": "Paul", "Me": "Scott"},
+#   {"labels": {"others": ["Speaker 1", ...]}, "names": {"Speaker 1": "Alex", "Me": "Scott"},
 #    "edited": true once the user moved or merged lines}
 # A track without labels uses its default (Me or Speaker on the mic, Others on the
 # other side). transcript.md is rebuilt from words.json and speakers.json after each change.
