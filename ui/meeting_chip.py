@@ -133,8 +133,14 @@ class MeetingChip:
     def _place(self, w, h):
         if self._right is None:
             self._right, self._top = self._default_corner()
+        geometry = f"{w}x{h}+{int(self._right - w)}+{int(self._top)}"
+        if geometry == getattr(self, "_geometry", None):
+            return
+        self._geometry = geometry
         self._canvas.configure(width=w, height=h)
-        self._win.geometry(f"{w}x{h}+{int(self._right - w)}+{int(self._top)}")
+        self._win.geometry(geometry)
+        # Paint the resized window now; left for later, the uncovered part can show black.
+        self._win.update_idletasks()
 
     # -- Public state API -----------------------------------------------------
 
@@ -270,7 +276,8 @@ class MeetingChip:
             if self.state == "finishing":
                 shown = clock(self._elapsed) if self._progress is None else f"{self._progress}%"
                 extra.append(("muted", shown, x))
-                x += self._measure(shown, small) + 12
+                # Room for "100%" whatever the number, so the chip keeps one width while it counts up.
+                x += max(self._measure(shown, small), self._measure("100%", small)) + 12
             if self.state == "ready":
                 open_w = self._measure("Open", label_font) + 20
                 extra.append(("open", "Open", x, open_w))
