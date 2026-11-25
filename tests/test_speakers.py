@@ -208,9 +208,9 @@ def test_app_skips_labeling_when_the_setting_is_off(tmp_path):
 def test_progress_text():
     from ui.meetings_page import progress_text
     assert progress_text(("transcribing", 0.423)) == "Transcribing\u2026 42%"
-    assert progress_text(("speakers", 0.6)) == "Finding speakers\u2026 60%"
+    assert progress_text(("speakers", 0.6)) == "Finding speakers, step 2 of 2\u2026 60%"
     assert progress_text(("speakers waiting", None)) == "Finding speakers\u2026"
-    assert progress_text(("speakers starting", 135.4)) == "Finding speakers\u2026 02:15"
+    assert progress_text(("speakers starting", 135.4)) == "Finding speakers, step 1 of 2\u2026 02:15"
 
 
 def test_elapsed_time_shows_until_separation_reports_a_fraction(tmp_path):

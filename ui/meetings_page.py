@@ -27,10 +27,12 @@ def progress_text(progress):
     stage, value = progress
     if stage == "transcribing":
         return f"Transcribing\u2026 {int(value * 100)}%"
+    # Separation has two steps: finding where speech turns fall (no progress reported,
+    # so the time so far), then matching voices (a real percentage).
     if stage == "speakers":
-        return f"Finding speakers\u2026 {int(value * 100)}%"
+        return f"Finding speakers, step 2 of 2\u2026 {int(value * 100)}%"
     if stage == "speakers starting":
-        return f"Finding speakers\u2026 {meetings.clock(value)}"
+        return f"Finding speakers, step 1 of 2\u2026 {meetings.clock(value)}"
     return "Finding speakers\u2026"
 
 

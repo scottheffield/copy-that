@@ -503,7 +503,7 @@ def test_finding_speakers_shows_a_spinner_over_a_still_bar(root, tmp_path):
     page.show_detail(folder)
     root.update_idletasks()
     _, label, _, bar = page._live[0]
-    assert label.cget("text").endswith("Finding speakers\u2026 01:15")
+    assert label.cget("text").endswith("Finding speakers, step 1 of 2\u2026 01:15")
     assert bar.spinner.widget.winfo_manager() == "pack" and bar.get() == 0 and bar.percent.cget("text") == ""
     stage[:] = ["speakers", 0.4]
     page._tick_progress()
