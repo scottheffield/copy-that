@@ -50,7 +50,8 @@ def test_settings_survive_appearance_change(root):
         for page in settings._pages:
             settings._select_page(page)
             root.update_idletasks()
-            assert settings._pages[page]._parent_frame.pack_info()["fill"] == "both"
+            shown = settings._pages[page]
+            assert getattr(shown, "_parent_frame", shown).pack_info()["fill"] == "both"
         settings._theme_var.set(mode.title())
         settings._apply()
         assert saved[-1]["theme"] == mode
@@ -355,5 +356,65 @@ def test_meetings_page_changes_the_folder_and_moves_meetings(root, tmp_path, mon
     assert title == "Move your meetings?" and message.startswith("1 meeting saved in")
     choices[-1][0][5]()  # Move
     assert provider.calls == [(str(new), True)]
-    assert any(str(new) in t for t in page_texts(window._pages["Meetings"]))
+    assert page._meetings_dir() == str(new)
     window._win.destroy()
+
+
+def test_meetings_header_records_and_holds_the_folder_menu(root, tmp_path, monkeypatch):
+    make_meeting(tmp_path, "2026-11-24 1300", "2026-11-24T13:00:00", "Design review")
+
+    class Provider(FakeMeetings):
+        state, elapsed, toggles = "idle", 0, 0
+
+        def meeting_status(self):
+            return self.state, self.elapsed
+
+        def toggle_meeting(self):
+            self.toggles += 1
+            self.state, self.elapsed = ("recording", 222) if self.state == "idle" else ("finishing", 0)
+
+        def set_meetings_dir(self, folder, move, on_done):
+            pass
+
+    provider = Provider()
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=provider)
+    window.show("Meetings")
+    page = window._meetings_page
+    # The header sits outside the scrolling body, so it stays put however long the list is.
+    assert page._record.master.master is page._header
+    assert "Meetings" in page_texts(page._header) and "Design review" not in page_texts(page._header)
+    assert "Design review" in page_texts(page._page)
+    assert page._record.cget("text").endswith("Record meeting")
+    page._record.invoke()
+    assert provider.toggles == 1 and page._record.cget("text").endswith("Stop  ·  03:42")
+    page._record.invoke()
+    assert page._record.cget("text") == "Finishing…" and page._record.cget("state") == "disabled"
+    provider.state = "idle"
+    page._update_record()
+    assert page._record.cget("text").endswith("Record meeting")
+
+    page._folder_menu()
+    root.update_idletasks()
+    texts = page_texts(page._menu)
+    assert "Saved in" in texts and any(t.endswith(tmp_path.name) for t in texts)
+    assert [item.cget("text") for item in page._menu_items] == ["Open meetings folder", "Change folder…"]
+    page._close_menu()
+    assert page._menu is None
+    # The detail view drops the header; going back restores it.
+    page.show_detail(tmp_path / "2026-11-24 1300")
+    assert not page._header.winfo_ismapped() or not page._header.winfo_manager()
+    page.show_list()
+    assert page._header.winfo_manager() == "pack"
+    window._win.destroy()
+
+
+def test_long_meeting_folder_paths_are_shortened_in_the_middle(root):
+    from ui.meetings_page import _shorten_path
+    font = ctk.CTkFont(size=13)
+    short = r"C:\Users\scott\CopyThat Meetings"
+    assert _shorten_path(short, font, 10_000) == short
+    long = r"C:\Users\scott\OneDrive - Company\Documents\Clients\Acme Corporation\2026\Meetings"
+    fitted = _shorten_path(long, font, 300)
+    assert fitted.split(chr(92))[:2] == ["C:", chr(0x2026)] and fitted.endswith(chr(92) + "Meetings")
+    assert font.measure(fitted) <= 300
+    assert font.measure(_shorten_path("x" * 400, font, 120)) <= 120

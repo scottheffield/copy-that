@@ -239,7 +239,8 @@ class SettingsWindow:
         container.pack(side="left", fill="both", expand=True)
         self._pages, self._nav_buttons = {}, {}
         for name in ("Dictation", "Meetings"):
-            self._pages[name] = ctk.CTkScrollableFrame(container, fg_color=_CONTENT_BG,
+            # Meetings scrolls inside its own page, under a fixed header.
+            self._pages[name] = ctk.CTkFrame(container, fg_color=_CONTENT_BG) if name == "Meetings" else                 ctk.CTkScrollableFrame(container, fg_color=_CONTENT_BG,
                 scrollbar_button_color=_CARD_BORDER, scrollbar_button_hover_color=_INPUT_BORDER)
             button = ctk.CTkButton(sidebar, text=name, anchor="w", width=116,
                 height=36, fg_color="transparent", hover_color=theme.SELECTED,

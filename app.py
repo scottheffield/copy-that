@@ -600,14 +600,13 @@ class GUIApp:
             self._chip.show_ready() if ok else self._chip.show_failed()
 
     def _open_last_transcript(self):
-        import os
+        """The chip's Open: the meeting's page in the main window."""
         if not self._meeting:
             return
-        target = self._meeting.folder / "transcript.md"
-        try:
-            os.startfile(target if target.exists() else self._meeting.folder)
-        except OSError as error:
-            log(f"Meeting: could not open the transcript ({type(error).__name__})")
+        folder = self._meeting.folder
+        if not (self._settings_win and self._settings_win.is_open):
+            self._show_main("Meetings")
+        self._root.after(50, lambda: self._settings_win and self._settings_win.show_meeting(folder))
 
     def _consent_seen(self):
         self._config["meeting_consent_seen"] = True
@@ -634,6 +633,19 @@ class GUIApp:
         if current and current.folder == folder and not current.finished.is_set():
             return True
         return folder in self._retranscribing
+
+    def meeting_status(self):
+        """(state, elapsed seconds) for the Meetings page's Record button:
+        recording, finishing (the last transcript is still being written), or idle."""
+        if self._meeting_recording():
+            return "recording", self._meeting.elapsed
+        if self._meeting and not self._meeting.finished.is_set():
+            return "finishing", 0
+        return "idle", 0
+
+    def toggle_meeting(self):
+        """Start or stop a meeting from the main window, like the tray item."""
+        self._toggle_meeting()
 
     def meetings_busy(self):
         """True while any meeting is recording, transcribing, or moving, so the folder can't change."""

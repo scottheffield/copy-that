@@ -1009,6 +1009,28 @@ def transcript_lines(text, limit=None):
     return lines
 
 
+def snippet(item, query, context=40):
+    """Why a meeting matched on its transcript: (speaker, before, hit, after) from the first
+    spoken line containing query, trimmed to about context characters each side. None when
+    the title matches (no explanation needed), the query is empty, or nothing matches."""
+    query = query.strip()
+    if not query or query.lower() in display_title(item).lower():
+        return None
+    for _time, speaker, text in transcript_lines(read_transcript(item["folder"])):
+        at = text.lower().find(query.lower())
+        if at < 0:
+            continue
+        before, hit, after = text[:at], text[at:at + len(query)], text[at + len(query):]
+        if len(before) > context:
+            tail = before[-context:]
+            # Start at a word boundary; the text before the hit keeps its own trailing space.
+            before = "\u2026" + (tail.split(" ", 1)[-1] if " " in tail.rstrip() else tail)
+        if len(after) > context:
+            after = after[:context].rsplit(" ", 1)[0] + "\u2026"
+        return speaker, before, hit, after
+    return None
+
+
 def matches(item, query):
     """Case-insensitive match on the title or the transcript text."""
     query = query.strip().lower()

@@ -18,6 +18,28 @@ STATUS_TEXT = {
 }
 
 
+MENU_PATH_WIDTH = 340  # The Folder popover's path line, in unscaled px
+
+
+def _shorten_path(path, font, width):
+    """Fit a long folder path in width (pixels) by replacing its middle folders with an
+    ellipsis, keeping the drive and the last folder, as in C:/Users/.../Clients/Meetings."""
+    path = str(path)
+    if font.measure(path) <= width:
+        return path
+    parts = path.split("\\")
+    head, tail = parts[:1], parts[1:]
+    while len(tail) > 1:
+        tail = tail[1:]
+        candidate = "\\".join(head + ["…"] + tail)
+        if font.measure(candidate) <= width:
+            return candidate
+    last = parts[-1]
+    while last and font.measure("…" + last) > width:
+        last = last[1:]
+    return "…" + last
+
+
 def _wrap(label, frame, margin=24):
     """Wrap label to frame's width. Event widths are physical pixels; CTk scales wraplength."""
     frame.bind("<Configure>", lambda e: label.configure(
@@ -25,11 +47,20 @@ def _wrap(label, frame, margin=24):
 
 
 class MeetingsPage:
-    """Renders into page (a CTkScrollableFrame). provider offers retranscribe_meeting(folder)
-    and meeting_in_use(folder); status(text, color) reports problems in the window's status line."""
+    """Renders into page (a plain frame): a fixed header (title, Record meeting, search,
+    Folder menu) over a scrolling body. provider offers retranscribe_meeting(folder),
+    meeting_in_use(folder), and for the header meeting_status() -> (state, elapsed) and
+    toggle_meeting(); status(text, color) reports problems in the window's status line."""
 
     def __init__(self, page, root, meetings_dir, provider=None, status=None):
-        self._page, self._root = page, root
+        self._outer, self._root = page, root
+        self._header = ctk.CTkFrame(page, fg_color="transparent")
+        self._page = ctk.CTkScrollableFrame(page, fg_color="transparent",
+                                            scrollbar_button_color=theme.BORDER,
+                                            scrollbar_button_hover_color=theme.MUTED)
+        self._page.pack(fill="both", expand=True)
+        self._record = None
+        self._tick_id = None
         self._meetings_dir = meetings_dir  # Callable: the folder can change in Settings
         self._provider = provider
         self._status = status or (lambda text, color="gray60": None)
@@ -57,8 +88,13 @@ class MeetingsPage:
             child.destroy()
         self._results = None
         if self._detail is None:
+            self._render_header()
+            self._page.pack_forget()  # Re-pack so the header sits above the scrolling body
+            self._header.pack(fill="x")
+            self._page.pack(fill="both", expand=True)
             self._render_list()
         else:
+            self._header.pack_forget()
             self._render_detail(self._detail)
         try:
             self._page._parent_canvas.yview_moveto(0)
@@ -86,33 +122,124 @@ class MeetingsPage:
 
     # -- List -----------------------------------------------------------------
 
-    def _render_list(self):
-        page = self._page
-        ctk.CTkLabel(page, text="Meetings", text_color=theme.TEXT,
-                     font=ctk.CTkFont(size=25, weight="bold")).pack(anchor="w", padx=20, pady=(20, 2))
-        ctk.CTkLabel(page, text="Your meetings, transcribed on this PC.", text_color=theme.MUTED,
-                     wraplength=460, justify="left").pack(anchor="w", padx=20, pady=(0, 12))
-        self._search = ctk.CTkEntry(page, placeholder_text="Search titles and transcripts", height=34,
+    def _render_header(self):
+        """Title and Record meeting, then search and the Folder menu. It stays put while the list scrolls."""
+        for child in self._header.winfo_children():
+            child.destroy()
+        top = ctk.CTkFrame(self._header, fg_color="transparent")
+        top.pack(fill="x", padx=20, pady=(18, 10))
+        ctk.CTkLabel(top, text="Meetings", text_color=theme.TEXT,
+                     font=ctk.CTkFont(size=25, weight="bold")).pack(side="left")
+        self._record = None
+        if self._provider and hasattr(self._provider, "toggle_meeting"):
+            self._record = ctk.CTkButton(top, text="", height=34, width=0, command=self._toggle_record,
+                                         font=ctk.CTkFont(size=14, weight="bold"))
+            self._record.pack(side="right")
+            self._update_record()
+        row = ctk.CTkFrame(self._header, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=(0, 10))
+        folder = ctk.CTkButton(row, text="Folder  \u25be", width=0, height=34, command=self._folder_menu,
+                               fg_color=theme.SURFACE, hover_color=theme.SELECTED, text_color=theme.TEXT,
+                               border_color=theme.BORDER, border_width=1)
+        folder.pack(side="right", padx=(8, 0))
+        self._folder_button = folder
+        self._search = ctk.CTkEntry(row, placeholder_text="Search titles and transcripts", height=34,
                                     fg_color=theme.FIELD, border_color=theme.BORDER, text_color=theme.TEXT)
-        self._search.pack(fill="x", padx=20, pady=(0, 8))
+        self._search.pack(side="left", fill="x", expand=True)
         if self._query:
             self._search.insert(0, self._query)
         self._search.bind("<KeyRelease>", self._on_search)
-        self._results = ctk.CTkFrame(page, fg_color="transparent")
-        self._results.pack(fill="x", padx=12)
-        self._fill_results()
-        footer = ctk.CTkFrame(page, fg_color="transparent")
-        footer.pack(fill="x", padx=20, pady=(16, 16))
-        note = ctk.CTkLabel(footer, text=f"Meetings are saved on this PC in {self._meetings_dir()}.",
-                            text_color=theme.MUTED, justify="left", anchor="w",
-                            font=ctk.CTkFont(size=12), wraplength=460)
-        note.pack(fill="x")
-        _wrap(note, footer, 0)
-        actions = ctk.CTkFrame(footer, fg_color="transparent")
-        actions.pack(fill="x", pady=(8, 0))
-        self._button(actions, "Open meetings folder", self._open_root)
+        ctk.CTkFrame(self._header, height=1, fg_color=theme.BORDER).pack(fill="x")
+
+    def _update_record(self):
+        """The Record button follows the meeting: Record, Stop with a timer, or Finishing."""
+        if self._tick_id:
+            try:
+                self._outer.after_cancel(self._tick_id)
+            except Exception:
+                pass
+            self._tick_id = None
+        button = self._record
+        if button is None or not button.winfo_exists():
+            return
+        state, elapsed = self._provider.meeting_status()
+        if state == "recording":
+            button.configure(text=f"\u25a0  Stop  \u00b7  {meetings.clock(elapsed)}", state="normal",
+                             fg_color=theme.ERROR, hover_color=theme.ERROR, text_color="#FFFFFF")
+            self._tick_id = self._outer.after(1000, self._update_record)
+        elif state == "finishing":
+            button.configure(text="Finishing\u2026", state="disabled", fg_color=theme.SURFACE,
+                             text_color_disabled=theme.MUTED)
+            self._tick_id = self._outer.after(1000, self._update_record)
+        else:
+            button.configure(text="\u25cf  Record meeting", state="normal", fg_color=theme.ACCENT,
+                             hover_color=theme.ACCENT_HOVER, text_color=theme.ON_ACCENT)
+
+    def _toggle_record(self):
+        self.save_pending()
+        self._provider.toggle_meeting()
+        self._update_record()
+
+    def _folder_menu(self):
+        """A small popover under the Folder button: where meetings are saved, Open meetings
+        folder, and Change folder. Drawn in the app's own style, right-aligned to the button
+        so it never runs past the window's edge."""
+        import tkinter as tk
+        self._close_menu()
+        button = self._folder_button
+        win = tk.Toplevel(self._outer)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        self._menu = win
+        # Square corners on a 1 px border-colored window: rounded ones left the window's own
+        # white background showing at the corners.
+        win.configure(bg=theme.color(theme.BORDER), highlightthickness=0)
+        frame = ctk.CTkFrame(win, fg_color=theme.SURFACE, border_width=0, corner_radius=0)
+        frame.pack(fill="both", expand=True, padx=1, pady=1)
+        ctk.CTkLabel(frame, text="Saved in", text_color=theme.MUTED, anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(fill="x", padx=14, pady=(10, 0))
+        path_font = ctk.CTkFont(size=13)
+        ctk.CTkLabel(frame, text=_shorten_path(self._meetings_dir(), path_font,
+                                               MENU_PATH_WIDTH * button._get_widget_scaling()),
+                     text_color=theme.TEXT, anchor="w", font=path_font).pack(fill="x", padx=14, pady=(0, 8))
+        ctk.CTkFrame(frame, height=1, fg_color=theme.BORDER).pack(fill="x", padx=8)
+        actions = [("Open meetings folder", self._open_root)]
         if self._provider and hasattr(self._provider, "set_meetings_dir"):
-            self._button(actions, "Change folder…", self._change_root)
+            actions.append(("Change folder\u2026", self._change_root))
+        self._menu_items = []
+        for label, command in actions:
+            item = ctk.CTkButton(frame, text=label, anchor="w", height=32, corner_radius=6,
+                                 fg_color="transparent", hover_color=theme.SELECTED, text_color=theme.TEXT,
+                                 font=ctk.CTkFont(size=14),
+                                 command=lambda c=command: (self._close_menu(), c()))
+            item.pack(fill="x", padx=6, pady=(4 if not self._menu_items else 0, 2))
+            self._menu_items.append(item)
+        ctk.CTkFrame(frame, height=4, fg_color="transparent").pack()
+        win.update_idletasks()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        x = button.winfo_rootx() + button.winfo_width() - w
+        y = button.winfo_rooty() + button.winfo_height() + 4
+        win.geometry(f"{w}x{h}+{max(0, x)}+{y}")
+        win.bind("<Escape>", lambda _e: self._close_menu())
+        win.bind("<FocusOut>", lambda _e: win.after(150, self._close_if_unfocused))
+        win.focus_force()
+
+    def _close_if_unfocused(self):
+        menu = getattr(self, "_menu", None)
+        if menu is not None and menu.winfo_exists():
+            focus = menu.focus_get()
+            if focus is None or not str(focus).startswith(str(menu)):
+                self._close_menu()
+
+    def _close_menu(self):
+        menu, self._menu = getattr(self, "_menu", None), None
+        if menu is not None and menu.winfo_exists():
+            menu.destroy()
+
+    def _render_list(self):
+        self._results = ctk.CTkFrame(self._page, fg_color="transparent")
+        self._results.pack(fill="x", padx=12, pady=(4, 16))
+        self._fill_results()
 
     def _open_root(self):
         folder = Path(self._meetings_dir())
@@ -131,7 +258,7 @@ class MeetingsPage:
                          "#FF9F0A")
             return
         old = self._meetings_dir()
-        chosen = filedialog.askdirectory(parent=self._page.winfo_toplevel(), title="Choose the meetings folder",
+        chosen = filedialog.askdirectory(parent=self._outer.winfo_toplevel(), title="Choose the meetings folder",
                                          initialdir=old if Path(old).is_dir() else str(Path.home()))
         if not chosen or meetings.same_folder(chosen, old):
             return
@@ -186,7 +313,7 @@ class MeetingsPage:
     def _fill_results(self):
         items = meetings.list_meetings(self._meetings_dir())
         if not items:
-            ctk.CTkLabel(self._results, text="No meetings yet.\nChoose Record meeting from the tray icon to start one.",
+            ctk.CTkLabel(self._results, text="No meetings yet.\nChoose Record meeting to start one.",
                          text_color=theme.MUTED, font=ctk.CTkFont(size=15), justify="center").pack(pady=48)
             return
         shown = [item for item in items if meetings.matches(item, self._query)]
@@ -201,9 +328,11 @@ class MeetingsPage:
                 heading = label
                 ctk.CTkLabel(self._results, text=label.upper(), text_color=theme.MUTED,
                              font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=10, pady=(12, 4))
-            self._row(item)
+            self._row(item, meetings.snippet(item, self._query) if self._query.strip() else None)
 
-    def _row(self, item):
+    def _row(self, item, found=None):
+        """One meeting. found: (speaker, before, hit, after) shows the transcript line that
+        matched the search, with the matching words in bold."""
         row = ctk.CTkFrame(self._results, fg_color="transparent", corner_radius=8, cursor="hand2")
         row.pack(fill="x", pady=1)
         status = item["status"]
@@ -223,6 +352,19 @@ class MeetingsPage:
         detail = STATUS_TEXT.get(status) or f"{item['started']:%I:%M %p}".lstrip("0")
         sub = ctk.CTkLabel(text, text=detail, text_color=color, anchor="w", font=ctk.CTkFont(size=13))
         sub.pack(fill="x")
+        clickable = []
+        if found:
+            speaker, before, hit, after = found
+            line = ctk.CTkFrame(text, fg_color="transparent", cursor="hand2")
+            line.pack(fill="x", pady=(2, 0))
+            clickable.append(line)
+            for part, color_, weight in ((f"{speaker}: {before}", theme.MUTED, "normal"),
+                                         (hit, theme.TEXT, "bold"), (after, theme.MUTED, "normal")):
+                if part:
+                    label = ctk.CTkLabel(line, text=part, text_color=color_, anchor="w",
+                                         font=ctk.CTkFont(size=13, weight=weight))
+                    label.pack(side="left")
+                    clickable.append(label)
         rename.configure(command=lambda: self._rename_in_row(item, title, sub, text))
 
         def enter(_event):
@@ -235,7 +377,7 @@ class MeetingsPage:
                     and row.winfo_rooty() <= y < row.winfo_rooty() + row.winfo_height()):
                 row.configure(fg_color="transparent")
 
-        for widget in (row, text, title, sub, duration, rename):
+        for widget in (row, text, title, sub, duration, rename, *clickable):
             if widget is rename:
                 widget.bind("<Enter>", enter, add="+")
                 widget.bind("<Leave>", leave, add="+")
