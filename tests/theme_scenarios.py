@@ -58,6 +58,10 @@ def test_settings_survive_appearance_change(root):
         assert saved[-1]["device"] == "CPU"
         assert saved[-1]["dictionary"]["copy that"] == "CopyThat"
         validate_config(saved[-1])
+    assert saved[-1]["meeting_speakers"] is True
+    settings._speakers_var.set(False)
+    settings._apply()
+    assert saved[-1]["meeting_speakers"] is False
     settings._win.destroy()
 
 
