@@ -55,3 +55,31 @@ def test_own_windows_are_never_a_paste_destination():
     own = Destination(1234, os.getpid(), "pythonw.exe")
     with patch("windows_io.foreground", return_value=own):
         assert not same_destination(own)
+
+
+def test_app_runs_at_full_speed_only_while_working(monkeypatch):
+    import threading
+    from types import SimpleNamespace
+    import app as app_module
+    import windows_io
+    calls = []
+    monkeypatch.setattr(windows_io, "keep_full_speed", lambda on=True: calls.append(on) or True)
+    gui = app_module.GUIApp.__new__(app_module.GUIApp)
+    gui._engine, gui._meeting, gui._retranscribing = SimpleNamespace(active=False), None, set()
+    gui._update_speed()
+    assert calls == []  # Idle: Windows decides, as it does at launch
+    gui._engine.active = True
+    gui._update_speed()
+    gui._update_speed()
+    assert calls == [True]
+    gui._engine.active = False
+    finished = threading.Event()
+    gui._meeting = SimpleNamespace(finished=finished)  # A meeting recording or finishing
+    gui._update_speed()
+    assert calls == [True]
+    finished.set()
+    gui._update_speed()
+    assert calls == [True, False]
+    gui._retranscribing = {"folder"}
+    gui._update_speed()
+    assert calls == [True, False, True]
