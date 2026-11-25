@@ -483,3 +483,30 @@ def test_unfinished_speakers_point_to_re_transcribe(root, tmp_path):
     assert buttons["Re-transcribe"].cget("fg_color") == theme.ACCENT
     assert buttons["Copy as Markdown"].cget("fg_color") != theme.ACCENT
     window._win.destroy()
+
+
+def test_finding_speakers_shows_a_spinner_over_a_still_bar(root, tmp_path):
+    folder = make_meeting(tmp_path, "2026-11-25 1030", "2026-11-25T10:30:00", "Call",
+                          lines=[("Me", "Hello there.")])
+    stage = ["speakers starting", 75.0]
+
+    class Busy(FakeMeetings):
+        def meeting_in_use(self, folder):
+            return True
+
+        def meeting_progress(self, folder):
+            return tuple(stage)
+
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=Busy())
+    window.show("Meetings")
+    page = window._meetings_page
+    page.show_detail(folder)
+    root.update_idletasks()
+    _, label, _, bar = page._live[0]
+    assert label.cget("text").endswith("Finding speakers\u2026 01:15")
+    assert bar.spinner.widget.winfo_manager() == "pack" and bar.get() == 0 and bar.percent.cget("text") == ""
+    stage[:] = ["speakers", 0.4]
+    page._tick_progress()
+    assert bar.spinner.widget.winfo_manager() == "" and bar.percent.cget("text") == "40%"
+    page._stop_progress()
+    window._win.destroy()

@@ -210,6 +210,19 @@ def test_progress_text():
     assert progress_text(("transcribing", 0.423)) == "Transcribing\u2026 42%"
     assert progress_text(("speakers", 0.6)) == "Finding speakers\u2026 60%"
     assert progress_text(("speakers waiting", None)) == "Finding speakers\u2026"
+    assert progress_text(("speakers starting", 135.4)) == "Finding speakers\u2026 02:15"
+
+
+def test_elapsed_time_shows_until_separation_reports_a_fraction(tmp_path):
+    folder = make_meeting(tmp_path, [], words("a b", 1.0) + words("c d", 5.0))
+    seen = []
+    def fake(path, stopped, report):
+        seen.append((speakers.progress(folder), speakers.elapsed(folder) is not None))
+        report(0.25)
+        seen.append((speakers.progress(folder), speakers.elapsed(folder) is not None))
+        return [(0.0, 2.0, 0), (4.5, 6.0, 1)]
+    speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
+    assert seen == [(None, True), (0.25, True)] and speakers.elapsed(folder) is None
 
 
 def test_speaker_progress_is_reported_while_running(tmp_path):

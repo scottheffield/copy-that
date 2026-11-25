@@ -34,11 +34,18 @@ class Stopped(Exception):
 
 _diarizer = None
 _progress = {}  # folder -> fraction done, while its speakers are being found
+_started = {}   # folder -> time.monotonic() when separation began
 
 
 def progress(folder):
     """Fraction done while a meeting's speakers are being found, else None."""
     return _progress.get(Path(folder))
+
+
+def elapsed(folder):
+    """Seconds since separation began for a meeting, else None."""
+    started = _started.get(Path(folder))
+    return None if started is None else time.monotonic() - started
 
 
 def _load():
@@ -222,7 +229,8 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
     started = time.monotonic()
     # No fraction until separation reports one: its first stage (finding speech turns) reports
     # nothing and takes minutes on a long meeting, so 0% would look stuck. The page shows
-    # "Finding speakers…" with a moving bar meanwhile.
+    # the time so far meanwhile, over a still bar.
+    _started[folder] = started
     try:
         segments = diarize_fn(folder / f"{track}.wav", stopped, lambda f: _progress.__setitem__(folder, f))
         ids = assign([w.time for w in words], drop_strays(segments))
@@ -235,6 +243,7 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
         return "failed"
     finally:
         _progress.pop(folder, None)
+        _started.pop(folder, None)
     count = len({i for i in ids if i is not None})
     meta = read_meta(folder)
     if count > 1:
