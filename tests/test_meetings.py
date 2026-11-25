@@ -374,13 +374,39 @@ def test_library_lists_groups_and_reads_transcripts(tmp_path):
     assert transcript_lines((tmp_path / "b" / "transcript.md").read_text()) == [("00:04", "Me", "Ship it Thursday.")]
 
 
+def _recycled(original):
+    """The Recycle Bin's ($I info, $R content) paths for an item deleted from original.
+    An $I file holds the original path as UTF-16 after a 28-byte header (Windows 10 and later)."""
+    import struct
+    from pathlib import Path
+    found = []
+    for info in (Path(original.anchor) / "$Recycle.Bin").glob("*/$I*"):
+        try:
+            data = info.read_bytes()
+            length = struct.unpack_from("<I", data, 24)[0]
+            path = data[28:28 + 2 * length].decode("utf-16-le").rstrip("\0")
+        except (OSError, struct.error, UnicodeDecodeError):
+            continue  # Another user's folder, or an older format
+        if Path(path) == original:
+            found.append((info, info.with_name("$R" + info.name[2:])))
+    return found
+
+
 def test_trash_folder_moves_a_meeting_to_the_recycle_bin(tmp_path):
+    import shutil
     from meetings import trash_folder
     folder = tmp_path / "2026-11-24 1300"
     folder.mkdir()
     (folder / "meta.json").write_text("{}", encoding="utf-8")
-    assert trash_folder(folder)
-    assert not folder.exists()
+    try:
+        assert trash_folder(folder)
+        assert not folder.exists()
+    finally:
+        # Empty this test's item from the real Recycle Bin, so runs don't pile up there.
+        for info, content in _recycled(folder):
+            shutil.rmtree(content, ignore_errors=True)
+            info.unlink(missing_ok=True)
+    assert not _recycled(folder)
 
 
 def test_move_meetings_keeps_names_and_skips_folders_in_use(tmp_path):
