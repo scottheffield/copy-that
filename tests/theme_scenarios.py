@@ -457,9 +457,9 @@ def test_meetings_header_records_and_holds_the_folder_menu(root, tmp_path, monke
 def test_long_meeting_folder_paths_are_shortened_in_the_middle(root):
     from ui.meetings_page import _shorten_path
     font = ctk.CTkFont(size=13)
-    short = r"C:\Users\scott\CopyThat Meetings"
+    short = r"C:\Users\someone\CopyThat Meetings"
     assert _shorten_path(short, font, 10_000) == short
-    long = r"C:\Users\scott\OneDrive - Company\Documents\Clients\Acme Corporation\2026\Meetings"
+    long = r"C:\Users\someone\OneDrive - Company\Documents\Clients\Acme Corporation\2026\Meetings"
     fitted = _shorten_path(long, font, 300)
     assert fitted.split(chr(92))[:2] == ["C:", chr(0x2026)] and fitted.endswith(chr(92) + "Meetings")
     assert font.measure(fitted) <= 300
