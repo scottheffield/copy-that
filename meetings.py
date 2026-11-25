@@ -637,8 +637,10 @@ def utterances(words, speaker, gap=UTTERANCE_GAP, labels=None):
         if lines and lines[-1]["speaker"] == speaker and word.time - lines[-1]["end"] <= gap:
             lines[-1]["words"].append(word.text)
             lines[-1]["end"] = word.time
+            lines[-1]["last"] = i
         else:
-            lines.append({"speaker": speaker, "start": word.time, "end": word.time, "words": [word.text]})
+            lines.append({"speaker": speaker, "start": word.time, "end": word.time, "words": [word.text],
+                          "first": i, "last": i})
     return lines
 
 
@@ -648,25 +650,39 @@ def clock(seconds):
     return f"{hours}:{rest // 60:02d}:{rest % 60:02d}" if hours else f"{rest // 60:02d}:{rest % 60:02d}"
 
 
-def render_transcript(meta, mic_words, others_words, others_heard, labels=None):
+def spoken_lines(mic_words, others_words, others_heard, labels=None):
+    """The transcript's spoken lines in time order, each with its track and word range.
+    labels: {"mic" or "others": one speaker label per word}."""
+    labels = labels or {}
+    lines = []
+    for track, words, default in (("mic", mic_words, "Me" if others_heard else "Speaker"),
+                                  ("others", others_words, "Others")):
+        for line in utterances(words, default, labels=labels.get(track)):
+            line["track"] = track
+            lines.append(line)
+    return sorted(lines, key=lambda line: line["start"])
+
+
+def render_transcript(meta, mic_words, others_words, others_heard, labels=None, names=None):
     """Markdown transcript. Without sound on the output track (an in-person
     meeting), everyone is on the mic, so it isn't labeled as you. A long manual
     mute gets a marker line, so the gap doesn't look like lost audio.
-    labels: {"mic" or "others": one speaker name per word}, from speaker separation."""
+    labels: {"mic" or "others": one speaker label per word}, from speaker separation
+    or the user's moves. names: {label: the name the user gave it}."""
+    names = names or {}
     me = "Me" if others_heard else "Speaker"
-    labels = labels or {}
     mutes = [{"start": a, "muted": b - a} for a, b in meta.get("muted", []) if b - a >= MUTE_MARKER_SECONDS]
-    lines = sorted(utterances(mic_words, me, labels=labels.get("mic"))
-                   + utterances(others_words, "Others", labels=labels.get("others")) + mutes,
+    lines = sorted(spoken_lines(mic_words, others_words, others_heard, labels) + mutes,
                    key=lambda line: line["start"])
     started = datetime.fromisoformat(meta["started"])
     out = [f"# {meta['title']}", "",
            f"{started:%Y-%m-%d %H:%M} · {clock(meta.get('duration_seconds', 0))}", ""]
     for line in lines:
         if "muted" in line:
-            out.append(f"_[{clock(line['start'])}] {me} muted for {clock(line['muted'])}_")
+            out.append(f"_[{clock(line['start'])}] {names.get(me, me)} muted for {clock(line['muted'])}_")
         else:
-            out.append(f"**[{clock(line['start'])}] {line['speaker']}:** {' '.join(line['words'])}")
+            speaker = names.get(line["speaker"], line["speaker"])
+            out.append(f"**[{clock(line['start'])}] {speaker}:** {' '.join(line['words'])}")
         out.append("")
     if not any("words" in line for line in lines):
         out.append("_No speech was recognized._")
@@ -724,6 +740,175 @@ def read_words(folder):
     return ([TimedWord(text, time) for time, text in data["mic"]],
             [TimedWord(text, time) for time, text in data["others"]],
             bool(data["others_heard"]))
+
+
+# -- Speaker names (#44) ---------------------------------------------------------
+#
+# speakers.json keeps who said each word and the names given to speakers:
+#   {"labels": {"others": ["Speaker 1", ...]}, "names": {"Speaker 1": "Paul", "Me": "Scott"},
+#    "edited": true once the user moved or merged lines}
+# A track without labels uses its default (Me or Speaker on the mic, Others on the
+# other side). transcript.md is rebuilt from words.json and speakers.json after each change.
+
+def read_speakers(folder):
+    """{"labels": {track: [label per word]}, "names": {label: name}, "edited": bool}."""
+    try:
+        data = json.loads((Path(folder) / "speakers.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    labels = data.get("labels") if isinstance(data.get("labels"), dict) else {}
+    names = data.get("names") if isinstance(data.get("names"), dict) else {}
+    return {"labels": labels, "names": names, "edited": bool(data.get("edited"))}
+
+
+def write_speakers(folder, data):
+    _write_json(Path(folder) / "speakers.json",
+                {"labels": data["labels"], "names": data["names"], "edited": bool(data.get("edited"))})
+
+
+def has_speaker_edits(folder):
+    """True when the user named a speaker other than Me, or moved or merged lines:
+    Re-transcribe undoes those. Me's name is kept."""
+    data = read_speakers(folder)
+    return bool(set(data["names"]) - {"Me"}) or data["edited"]
+
+
+def _labels_for(data, words_by_track):
+    return {track: list(data["labels"][track]) for track, words in words_by_track.items()
+            if isinstance(data["labels"].get(track), list) and len(data["labels"][track]) == len(words)}
+
+
+def rebuild_transcript(folder):
+    """Write transcript.md from words.json, speakers.json and meta.json."""
+    folder = Path(folder)
+    mic, others, heard = read_words(folder)
+    data = read_speakers(folder)
+    labels = _labels_for(data, {"mic": mic, "others": others})
+    text = render_transcript(read_meta(folder), mic, others, heard, labels, data["names"])
+    (folder / "transcript.md").write_text(text, encoding="utf-8")
+
+
+def speaker_rows(folder):
+    """The meeting page's lines: dicts with start, label, name, text, track, first, last.
+    None when the meeting has no word times (recorded before they were kept)."""
+    try:
+        mic, others, heard = read_words(folder)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    data = read_speakers(folder)
+    labels = _labels_for(data, {"mic": mic, "others": others})
+    return [{"start": line["start"], "label": line["speaker"],
+             "name": data["names"].get(line["speaker"], line["speaker"]),
+             "text": " ".join(line["words"]), "track": line["track"],
+             "first": line["first"], "last": line["last"]}
+            for line in spoken_lines(mic, others, heard, labels)]
+
+
+def speakers_in(rows):
+    """[(label, name)] for every speaker in rows, in order of first appearance."""
+    seen = {}
+    for row in rows:
+        seen.setdefault(row["label"], row["name"])
+    return list(seen.items())
+
+
+def _track_labels(folder, data, track):
+    """The labels list for track, filled with its default when it has none yet."""
+    mic, others, heard = read_words(folder)
+    words = mic if track == "mic" else others
+    current = data["labels"].get(track)
+    if not isinstance(current, list) or len(current) != len(words):
+        default = ("Me" if heard else "Speaker") if track == "mic" else "Others"
+        data["labels"][track] = [default] * len(words)
+    return data["labels"][track]
+
+
+def _clean_name(name):
+    name = " ".join(str(name).split())[:60]
+    if not name:
+        raise ValueError("A speaker needs a name")
+    return name
+
+
+def speaker_named(folder, name, besides=None):
+    """The label of the speaker already called name (any case), other than besides; else None."""
+    for label, existing in speakers_in(speaker_rows(folder) or []):
+        if label != besides and existing.casefold() == name.casefold():
+            return label
+    return None
+
+
+def name_speaker(folder, label, name):
+    """Call a speaker name on every line. A name another speaker already has merges
+    the two (the caller confirms first). Returns the label that now has the name."""
+    name = _clean_name(name)
+    other = speaker_named(folder, name, besides=label)
+    if other is not None:
+        merge_speakers(folder, label, other)
+        return other
+    data = read_speakers(folder)
+    if name == label:
+        data["names"].pop(label, None)
+    else:
+        data["names"][label] = name
+    write_speakers(folder, data)
+    rebuild_transcript(folder)
+    return label
+
+
+def merge_speakers(folder, source, target):
+    """Every line by source goes to target; source's name is dropped."""
+    data = read_speakers(folder)
+    for track in ("mic", "others"):
+        labels = _track_labels(folder, data, track)
+        data["labels"][track] = [target if label == source else label for label in labels]
+    data["names"].pop(source, None)
+    data["edited"] = True
+    write_speakers(folder, data)
+    rebuild_transcript(folder)
+
+
+def move_line(folder, track, first, last, target):
+    """One line (track, word indexes first..last) goes to speaker target."""
+    data = read_speakers(folder)
+    labels = _track_labels(folder, data, track)
+    for i in range(max(0, first), min(last, len(labels) - 1) + 1):
+        labels[i] = target
+    data["edited"] = True
+    write_speakers(folder, data)
+    rebuild_transcript(folder)
+
+
+def add_speaker(folder, name):
+    """A new speaker called name, with no lines yet. Returns its label (the next free Speaker N)."""
+    name = _clean_name(name)
+    data = read_speakers(folder)
+    used = {row["label"] for row in speaker_rows(folder) or []} | set(data["names"])
+    n = 1
+    while f"Speaker {n}" in used:
+        n += 1
+    label = f"Speaker {n}"
+    data["names"][label] = name
+    write_speakers(folder, data)
+    return label
+
+
+def reset_speakers(folder):
+    """Forget labels, moves and names (a new transcript starts over), keeping Me's name."""
+    names = read_speakers(folder)["names"]
+    write_speakers(folder, {"labels": {}, "names": {"Me": names["Me"]} if "Me" in names else {}})
+
+
+def set_my_name(folder, name):
+    """Call Me name in this meeting (from the name last given to Me in any meeting)."""
+    data = read_speakers(folder)
+    if data["names"].get("Me") == name:
+        return
+    data["names"]["Me"] = name
+    write_speakers(folder, data)
+    rebuild_transcript(folder)
 
 
 def _write_json(path, data):
@@ -863,9 +1048,13 @@ class MeetingTranscription:
             heard = _heard(self._tracks["others"].track)
         keep_title(self.folder, meta)  # Renamed while recording or transcribing
         mic_words, others_words = self._tracks["mic"].words, self._tracks["others"].words
-        text = render_transcript(meta, mic_words, others_words, heard)
+        # A new transcript starts speakers over; only the name given to Me carries on.
+        mine = read_speakers(self.folder)["names"].get("Me")
+        names = {"Me": mine} if mine else {}
+        text = render_transcript(meta, mic_words, others_words, heard, names=names)
         try:
             write_words(self.folder, mic_words, others_words, heard)
+            write_speakers(self.folder, {"labels": {}, "names": names})
             meta["speakers"] = {"status": "pending"}
         except OSError as error:
             self._log(f"Meeting: could not save word times ({type(error).__name__})")
