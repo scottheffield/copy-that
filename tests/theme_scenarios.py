@@ -104,6 +104,11 @@ def test_one_window_apply_only_on_settings_pages(root):
     window.show()
     root.update_idletasks()
     assert window._win.title() == "CopyThat"
+    # On top only while it comes in front, then an ordinary window Alt-Tab can cover.
+    assert window._win.attributes("-topmost")
+    root.after(window.FRONT_MS + 100, root.quit)
+    root.mainloop()
+    assert not window._win.attributes("-topmost")
     assert window.page == "General" and window._apply_btn.winfo_manager() == "pack"
     window.show("Dictation")
     root.update_idletasks()

@@ -149,13 +149,23 @@ class SettingsWindow:
     def page(self):
         return self._page
 
+    FRONT_MS = 300  # How long the window stays on top when opened, to come in front
+
+    def _to_front(self):
+        """Bring the window in front of other apps, then let it behave like any window.
+        It used to stay on top for good, so Alt-Tab couldn't put anything over it."""
+        win = self._win
+        win.lift()
+        win.attributes("-topmost", True)
+        win.after(self.FRONT_MS, lambda: win.winfo_exists() and win.attributes("-topmost", False))
+
     def show(self, page=None):
         """Open the window, or bring it forward, at page (default: the last page used)."""
         if self._win is not None and self._win.winfo_exists():
             if page:
                 self._select_page(page)
             self._win.deiconify()
-            self._win.lift()
+            self._to_front()
             self._win.focus_force()
             return
         requested = page  # The page loop below reuses the name
@@ -180,7 +190,7 @@ class SettingsWindow:
         self._win._iconbitmap_method_called = True
         self._win.iconphoto(False, self._icon_photo)
 
-        self._win.attributes("-topmost", True)
+        self._to_front()
 
         # --- Brand header ---
         header = ctk.CTkFrame(self._win, fg_color=_HEADER_BG, corner_radius=0,
