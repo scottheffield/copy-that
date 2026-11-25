@@ -1373,6 +1373,21 @@ def titled_name(meta):
     return f"{base} {title}" if title and title != "Untitled" else base
 
 
+def misnamed_folders(root):
+    """Meeting folders under root whose name isn't the one their title gives (#57).
+    A folder already renamed to "<name> (2)" because the name was taken counts as named."""
+    stale = []
+    for item in list_meetings(root):
+        folder = item["folder"]
+        try:
+            name = titled_name(read_meta(folder))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if folder.name != name and not re.fullmatch(re.escape(name) + r" \(\d+\)", folder.name):
+            stale.append(folder)
+    return stale
+
+
 def retitle_folder(folder):
     """Rename a meeting's folder to match its title. Returns the folder's path now.
     OSError when Windows refuses (a file in it is open); the folder keeps its name."""
