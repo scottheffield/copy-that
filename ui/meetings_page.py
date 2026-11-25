@@ -23,13 +23,55 @@ PROGRESS_MS = 700      # How often a transcript or speaker progress line updates
 
 
 def progress_text(progress):
-    """The status line for (stage, fraction) from meeting_progress."""
-    stage, fraction = progress
+    """The status line for (stage, value) from meeting_progress."""
+    stage, value = progress
     if stage == "transcribing":
-        return f"Transcribing\u2026 {int(fraction * 100)}%"
+        return f"Transcribing\u2026 {int(value * 100)}%"
+    # Separation has two steps: finding where speech turns fall (no progress reported,
+    # so the time so far), then matching voices (a real percentage).
     if stage == "speakers":
-        return f"Finding speakers\u2026 {int(fraction * 100)}%"
+        return f"Finding speakers, step 2 of 2\u2026 {int(value * 100)}%"
+    if stage == "speakers starting":
+        return f"Finding speakers, step 1 of 2\u2026 {meetings.clock(value)}"
     return "Finding speakers\u2026"
+
+
+def progress_fraction(progress):
+    """The bar's fraction, or None while there's no real one yet."""
+    return progress[1] if progress[0] in ("transcribing", "speakers") else None
+
+
+class Spinner:
+    """A small turning arc beside a status line: work is going on, with no number to show yet."""
+    SIZE, STEP_MS, STEP_DEGREES = 14, 60, 24
+
+    def __init__(self, parent):
+        import tkinter as tk
+        scale = ctk.ScalingTracker.get_widget_scaling(parent)
+        size = round(self.SIZE * scale)
+        self.widget = tk.Canvas(parent, width=size, height=size, highlightthickness=0, bd=0,
+                                bg=theme.color(theme.BG))
+        pad = max(2, round(2 * scale))
+        self._arc = self.widget.create_arc(pad, pad, size - pad, size - pad, start=0, extent=100,
+                                           style="arc", width=max(2, round(2 * scale)),
+                                           outline=theme.color(theme.ACCENT))
+        self._angle, self._running = 0, False
+
+    def show(self, on):
+        if on and not self._running:
+            self._running = True
+            self.widget.pack(side="left", padx=(8, 0))
+            self._turn()
+        elif not on and self._running:
+            self._running = False
+            self.widget.pack_forget()
+
+    def _turn(self):
+        if not self._running or not self.widget.winfo_exists():
+            return
+        self._angle = (self._angle - self.STEP_DEGREES) % 360
+        self.widget.itemconfigure(self._arc, start=self._angle)
+        self.widget.after(self.STEP_MS, self._turn)
 
 
 def _shorten_path(path, font, width):
@@ -133,18 +175,14 @@ class MeetingsPage:
         text = progress_text(progress)
         label.configure(text=" \u00b7 ".join([*parts, text]) if parts else text)
         if bar is not None and bar.winfo_exists():
+            fraction = progress_fraction(progress)
             percent = getattr(bar, "percent", None)
             if percent is not None and percent.winfo_exists():
-                percent.configure(text="" if progress[1] is None else f"{int(progress[1] * 100)}%")
-            if progress[1] is None:
-                if bar.cget("mode") != "indeterminate":
-                    bar.configure(mode="indeterminate")
-                    bar.start()
-            else:
-                if bar.cget("mode") != "determinate":
-                    bar.stop()
-                    bar.configure(mode="determinate")
-                bar.set(progress[1])
+                percent.configure(text="" if fraction is None else f"{int(fraction * 100)}%")
+            spinner = getattr(bar, "spinner", None)
+            if spinner is not None and spinner.widget.winfo_exists():
+                spinner.show(fraction is None)
+            bar.set(fraction or 0)  # Still: empty until there is real progress
 
     def _start_progress(self):
         if self._live and self._progress_id is None:
@@ -553,9 +591,11 @@ class MeetingsPage:
         progress = self._progress(folder)
         if item["status"] in STATUS_TEXT and not (progress and item["status"] == "transcribing"):
             parts.append(STATUS_TEXT[item["status"]])
-        meta_line = ctk.CTkLabel(page, text=" · ".join(parts), text_color=theme.MUTED,
+        line = ctk.CTkFrame(page, fg_color="transparent")
+        line.pack(anchor="w", padx=20, pady=(2, 4 if progress else 12))
+        meta_line = ctk.CTkLabel(line, text=" · ".join(parts), text_color=theme.MUTED,
                                  font=ctk.CTkFont(size=13))
-        meta_line.pack(anchor="w", padx=20, pady=(2, 4 if progress else 12))
+        meta_line.pack(side="left")
         if progress is not None:
             row = ctk.CTkFrame(page, fg_color="transparent")
             row.pack(fill="x", padx=20, pady=(4, 12))
@@ -566,6 +606,7 @@ class MeetingsPage:
                                        font=ctk.CTkFont(size=13, weight="bold"))
             bar.percent.pack(side="right", padx=(10, 0))
             bar.pack(side="left", fill="x", expand=True)
+            bar.spinner = Spinner(line)
             self._show_progress(folder, meta_line, parts, bar)
 
         text = meetings.read_transcript(folder)

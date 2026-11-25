@@ -25,7 +25,7 @@ MIN_DURATION_ON = 0.3
 MIN_DURATION_OFF = 0.5
 NUM_THREADS = 2
 NEAREST_SECONDS = 1.0  # A word outside every segment takes a segment this close
-MIN_SPEAKER_SECONDS = 10.0  # A "speaker" with less speech than this is a stray (#44)
+MIN_SPEAKER_WORDS = 20  # A "speaker" left with fewer words than this is a stray (#44)
 
 
 class Stopped(Exception):
@@ -34,11 +34,18 @@ class Stopped(Exception):
 
 _diarizer = None
 _progress = {}  # folder -> fraction done, while its speakers are being found
+_started = {}   # folder -> time.monotonic() when separation began
 
 
 def progress(folder):
     """Fraction done while a meeting's speakers are being found, else None."""
     return _progress.get(Path(folder))
+
+
+def elapsed(folder):
+    """Seconds since separation began for a meeting, else None."""
+    started = _started.get(Path(folder))
+    return None if started is None else time.monotonic() - started
 
 
 def _load():
@@ -143,21 +150,33 @@ def diarize_apart(path, stopped=lambda: False, report=lambda fraction: None):
         receive.close()
 
 
-def drop_strays(segments, minimum=None):
-    """Segments without the speakers heard for less than minimum seconds in all.
+def merge_strays(ids, minimum=None):
+    """Speaker ids with each stray merged into the speakers around its words.
 
     Separation sometimes splits a few short replies ("Yeah.") off as another
-    speaker, which made a one-on-one call read as two people. Their words go to
-    whoever is talking around them. The speaker heard longest is always kept."""
-    minimum = MIN_SPEAKER_SECONDS if minimum is None else minimum
-    totals = {}
-    for start, end, speaker in segments:
-        totals[speaker] = totals.get(speaker, 0.0) + (end - start)
-    if not totals:
-        return segments
-    longest = max(totals, key=totals.get)
-    keep = {speaker for speaker, total in totals.items() if total >= minimum} | {longest}
-    return [s for s in segments if s[2] in keep]
+    speaker, which made a one-on-one call read as two people. A speaker left with
+    fewer than minimum words is a stray: each of its words joins the speaker of the
+    word before it (or after it, at the start). The speaker with most words is kept.
+    Counting words, not separation's own segment time, matters: on an 80-minute
+    call the stray had over 10 s of segments, mostly overlapping the other voice,
+    but only 8 words."""
+    minimum = MIN_SPEAKER_WORDS if minimum is None else minimum
+    counts = {}
+    for speaker in ids:
+        if speaker is not None:
+            counts[speaker] = counts.get(speaker, 0) + 1
+    if not counts:
+        return list(ids)
+    most = max(counts, key=counts.get)
+    strays = {speaker for speaker, count in counts.items() if count < minimum and speaker != most}
+    out = [None if speaker in strays else speaker for speaker in ids]
+    for i in range(1, len(out)):
+        if out[i] is None and ids[i] is not None:
+            out[i] = out[i - 1]
+    for i in range(len(out) - 2, -1, -1):
+        if out[i] is None and ids[i] is not None:
+            out[i] = out[i + 1]
+    return out
 
 
 def assign(times, segments, nearest=NEAREST_SECONDS):
@@ -222,10 +241,11 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
     started = time.monotonic()
     # No fraction until separation reports one: its first stage (finding speech turns) reports
     # nothing and takes minutes on a long meeting, so 0% would look stuck. The page shows
-    # "Finding speakers…" with a moving bar meanwhile.
+    # the time so far meanwhile, over a still bar.
+    _started[folder] = started
     try:
         segments = diarize_fn(folder / f"{track}.wav", stopped, lambda f: _progress.__setitem__(folder, f))
-        ids = assign([w.time for w in words], drop_strays(segments))
+        ids = merge_strays(assign([w.time for w in words], segments))
     except Stopped:
         _set_status(folder, "pending")  # Marked interrupted on the next launch (#66)
         return "pending"
@@ -235,6 +255,7 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
         return "failed"
     finally:
         _progress.pop(folder, None)
+        _started.pop(folder, None)
     count = len({i for i in ids if i is not None})
     meta = read_meta(folder)
     if count > 1:

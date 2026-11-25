@@ -13,8 +13,8 @@ META = {"title": "Panel", "started": "2026-11-24T16:30:00", "duration_seconds": 
 
 @pytest.fixture(autouse=True)
 def short_turns_count(monkeypatch):
-    """These tests use turns of a few seconds; only the stray tests use the real minimum."""
-    monkeypatch.setattr(speakers, "MIN_SPEAKER_SECONDS", 0.0)
+    """These tests use a few words per speaker; only the stray tests use the real minimum."""
+    monkeypatch.setattr(speakers, "MIN_SPEAKER_WORDS", 0)
 
 
 def words(text, start, step=0.4):
@@ -208,8 +208,21 @@ def test_app_skips_labeling_when_the_setting_is_off(tmp_path):
 def test_progress_text():
     from ui.meetings_page import progress_text
     assert progress_text(("transcribing", 0.423)) == "Transcribing\u2026 42%"
-    assert progress_text(("speakers", 0.6)) == "Finding speakers\u2026 60%"
+    assert progress_text(("speakers", 0.6)) == "Finding speakers, step 2 of 2\u2026 60%"
     assert progress_text(("speakers waiting", None)) == "Finding speakers\u2026"
+    assert progress_text(("speakers starting", 135.4)) == "Finding speakers, step 1 of 2\u2026 02:15"
+
+
+def test_elapsed_time_shows_until_separation_reports_a_fraction(tmp_path):
+    folder = make_meeting(tmp_path, [], words("a b", 1.0) + words("c d", 5.0))
+    seen = []
+    def fake(path, stopped, report):
+        seen.append((speakers.progress(folder), speakers.elapsed(folder) is not None))
+        report(0.25)
+        seen.append((speakers.progress(folder), speakers.elapsed(folder) is not None))
+        return [(0.0, 2.0, 0), (4.5, 6.0, 1)]
+    speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
+    assert seen == [(None, True), (0.25, True)] and speakers.elapsed(folder) is None
 
 
 def test_speaker_progress_is_reported_while_running(tmp_path):
@@ -255,18 +268,22 @@ def test_separation_runs_in_its_own_process_and_stops_at_once(tmp_path):
     assert time.monotonic() - started < 5
 
 
-def test_a_speaker_heard_for_seconds_is_a_stray():
-    turns = [(0.0, 30.0, 0), (30.0, 31.5, 1), (31.5, 60.0, 0), (60.0, 75.0, 2)]
-    assert speakers.drop_strays(turns, 10.0) == [(0.0, 30.0, 0), (31.5, 60.0, 0), (60.0, 75.0, 2)]
-    assert speakers.drop_strays([(0.0, 2.0, 0), (2.0, 3.0, 1)], 10.0) == [(0.0, 2.0, 0)]  # Longest kept
-    assert speakers.drop_strays([]) == []
+def test_a_speaker_with_few_words_is_a_stray():
+    ids = [0] * 30 + [1, 1] + [0] * 5 + [2] * 25 + [1]
+    merged = speakers.merge_strays(ids, 20)
+    assert merged == [0] * 37 + [2] * 26
+    assert speakers.merge_strays([1, 1, 0], 20) == [1, 1, 1]  # The speaker with most words stays
+    assert speakers.merge_strays([None, 3, 0, 0], 20) == [None, 0, 0, 0]  # A stray at the start joins the next
+    assert speakers.merge_strays([], 20) == []
 
 
 def test_stray_reply_joins_the_speaker_around_it(tmp_path, monkeypatch):
-    monkeypatch.setattr(speakers, "MIN_SPEAKER_SECONDS", 10.0)
-    others = words("so here is the plan", 0.0) + words("yeah", 31.0) + words("and then we ship", 40.0)
+    # As on a real one-on-one call: the stray's segments are long (overlapping the
+    # other voice) but only one word ends up with it.
+    monkeypatch.setattr(speakers, "MIN_SPEAKER_WORDS", 20)
+    others = words("so here is the plan for this week", 0.0) + words("yeah", 31.0) +         words("and then we ship it to everyone on friday", 40.0)
     folder = make_meeting(tmp_path, [], others)
-    fake = lambda path, stopped, report: [(0.0, 30.5, 0), (30.8, 31.6, 1), (39.0, 70.0, 0)]
+    fake = lambda path, stopped, report: [(0.0, 30.5, 0), (25.0, 45.0, 1), (30.8, 31.6, 1), (39.0, 70.0, 0)]
     speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
     assert meetings.read_meta(folder)["speakers"]["count"] == 1
     assert "Speaker 2" not in meetings.read_transcript(folder)

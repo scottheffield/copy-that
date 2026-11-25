@@ -662,16 +662,20 @@ class GUIApp:
 
     def meeting_progress(self, folder):
         """(stage, fraction) while a meeting's transcript is being finished or its speakers
-        found: ("transcribing", 0.4), ("speakers", 0.6), ("speakers waiting", None); else None."""
+        found: ("transcribing", 0.4), ("speakers", 0.6), ("speakers starting", seconds so far)
+        before separation reports a fraction, ("speakers waiting", None) in the queue; else None."""
         from meetings import transcribe_progress
-        from speakers import progress
+        from speakers import elapsed, progress
         folder = Path(folder)
         fraction = transcribe_progress(folder)
         if fraction is not None:
             return "transcribing", fraction
         if self.finding_speakers(folder):
             fraction = progress(folder)
-            return ("speakers", fraction) if fraction is not None else ("speakers waiting", None)
+            if fraction is not None:
+                return "speakers", fraction
+            seconds = elapsed(folder)
+            return ("speakers starting", seconds) if seconds is not None else ("speakers waiting", None)
         return None
 
     def finding_speakers(self, folder):
