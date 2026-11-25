@@ -209,6 +209,34 @@ def render_icon_mic(size, color):
     return img.resize((size, size), Image.LANCZOS)
 
 
+def render_icon_mic_toggle(size, color, slashed=False):
+    """A slimmer microphone for the meeting chip's mute button, which must read at a
+    glance: capsule, cradle, stem and base, rendered at 3x and downsampled.
+    slashed adds a diagonal line through it for the muted state."""
+    s = SUPERSAMPLE
+    ss = size * s
+    img = Image.new("RGBA", (ss, ss), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    c = _hex_to_rgba(color)
+    w = max(s * 3 // 2, ss // 10)               # Stroke width
+    cx = ss // 2
+    cap_half = ss * 3 // 20
+    draw.rounded_rectangle([cx - cap_half, ss // 20, cx + cap_half, ss * 11 // 20],
+                           radius=cap_half, fill=c)
+    cradle = ss * 6 // 20                        # Half-width of the U around the capsule
+    draw.arc([cx - cradle, ss * 3 // 20, cx + cradle, ss * 14 // 20], start=0, end=180, fill=c, width=w)
+    draw.line([(cx, ss * 14 // 20 - w // 2), (cx, ss * 18 // 20)], fill=c, width=w)
+    draw.line([(cx - ss * 4 // 20, ss * 18 // 20), (cx + ss * 4 // 20, ss * 18 // 20)], fill=c, width=w)
+    if slashed:
+        # Clear a band beside the slash so it reads as a line through the mic, not part of it.
+        a, b = (ss * 3 // 20, ss // 20), (ss * 17 // 20, ss * 19 // 20)
+        gap = Image.new("L", (ss, ss), 0)
+        ImageDraw.Draw(gap).line([(a[0] + w, a[1] - w // 2), (b[0] + w, b[1] - w // 2)], fill=255, width=w * 2)
+        img.putalpha(Image.composite(Image.new("L", (ss, ss), 0), img.getchannel("A"), gap))
+        ImageDraw.Draw(img).line([a, b], fill=c, width=w)
+    return img.resize((size, size), Image.LANCZOS)
+
+
 def render_icon_stop(size, color):
     """Render a rounded-square stop icon at 2x and downsample.
 

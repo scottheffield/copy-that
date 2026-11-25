@@ -1,6 +1,7 @@
 """Meeting mode: files, resampling, transcript layout, and yielding to dictation."""
 import json
 import threading
+import time
 import wave
 from datetime import datetime
 
@@ -183,7 +184,7 @@ def test_model_without_word_times_still_transcribes(tmp_path):
 
 
 class FakeCapture:
-    def __init__(self, track, *args):
+    def __init__(self, track, *args, **kwargs):
         self.track, self.name, self.devices = track, "Fake device", ["Fake device"]
         self.level = meetings.Level()
 
@@ -397,3 +398,74 @@ def test_move_meetings_keeps_names_and_skips_folders_in_use(tmp_path):
     assert (busy / "meta.json").exists() and (old / "notes").exists()
     assert move_meetings(new, new) == (0, 0)
     assert same_folder(str(new) + "\\", new)
+
+
+def _mic(tmp_path, dictating=lambda: False):
+    track = meetings.WavTrack(tmp_path / "mic.wav")
+    mic = meetings.MicCapture(track, mutes=meetings.Mutes(dictating))
+    return mic, track
+
+
+def _feed(mic, seconds, start=100.0, value=0.1):
+    """Feed 100 ms blocks of constant sound, captured from start onward."""
+    block = np.full((1600, 1), value, dtype=np.float32)
+    for i in range(int(round(seconds * 10))):
+        mic._on_audio(block, 1600, None, None, now=start + (i + 1) * 0.1)
+
+
+def test_dictation_is_left_out_of_the_meeting_mic_with_a_margin(tmp_path):
+    state = {"on": False}
+    mic, track = _mic(tmp_path, lambda: state["on"])
+    _feed(mic, 2.0, start=100.0)            # 100.0-102.0 before the take
+    state["on"] = True
+    _feed(mic, 1.0, start=102.0)            # 102.0-103.0 dictating
+    state["on"] = False
+    _feed(mic, 2.0, start=103.0)            # 103.0-105.0 after
+    mic._flush(now=104.0)                   # Only blocks ending by 103.7 are written yet
+    assert abs(track.seconds - 3.7) < 1e-6
+    mic._flush(final=True)
+    audio = track[0:len(track)]
+    assert len(audio) == 5 * RATE           # Same length: left-out audio is silence
+    loud = np.abs(audio).reshape(-1, 1600).max(axis=1) > 0
+    # Blocks are 100 ms; the take ran 2.0-3.0 s, so 1.7-3.3 s (±0.3 s margin) is silent.
+    assert loud[:17].all() and not loud[17:33].any() and loud[33:].all()
+    track.close()
+
+
+def test_manual_mute_is_saved_marked_and_hides_the_silent_mic_problem(tmp_path):
+    mic, track = _mic(tmp_path)
+    mic.mutes.set_manual(True, now=101.0)
+    _feed(mic, 2.0)
+    assert mic.mutes.manual
+    mic.mutes.set_manual(False, now=101.5)
+    mic._flush(final=True)
+    loud = np.abs(track[0:len(track)]).reshape(-1, 1600).max(axis=1) > 0
+    assert loud[:10].all() and not loud[10:15].any() and loud[15:].all()
+    assert mic.mutes.manual_spans(origin=100.0, until=110.0) == [[1.0, 1.5]]
+    assert mic._last_sound is not None   # Sound while muted still proves the mic works
+    track.close()
+
+
+def test_transcript_marks_long_manual_mutes_only():
+    from datetime import datetime
+    words = [TimedWord("hello", 1.0), TimedWord("again", 70.0)]
+    meta = {"title": "Sync", "started": datetime(2026, 11, 24, 9).isoformat(), "duration_seconds": 80,
+            "muted": [[10.0, 52.0], [60.0, 62.0]]}
+    text = meetings.render_transcript(meta, words, [], others_heard=True)
+    assert "_[00:10] Me muted for 00:42_" in text
+    assert "muted for 00:02" not in text
+    assert text.index("hello") < text.index("muted for 00:42") < text.index("again")
+
+
+def test_session_mute_needs_a_started_meeting_and_survives_in_meta(tmp_path):
+    session = meetings.MeetingSession(tmp_path, lambda: None, lambda: False,
+                                      mic_factory=FakeCapture, output_factory=lambda track, log: FakeCapture(track))
+    session.set_muted(True)
+    assert not session.muted                 # Not started yet
+    session._t0 = session.mic._started = time.monotonic() - 3
+    session.set_muted(True)
+    assert session.muted and session.problem is None
+    assert meetings.read_meta(session.folder)["muted"][0][1] >= 3
+    session.set_muted(False)
+    assert not session.muted
+    session._close_tracks()

@@ -11,8 +11,11 @@ class TrayManager:
     def __init__(self, on_toggle, on_quit, on_settings=None, on_history=None, on_open=None,
                  device="GPU", model="parakeet", hotkey="ctrl+win",
                  on_startup=None, startup_enabled=None,
-                 on_meeting=None, meeting_recording=None, on_meetings_folder=None):
+                 on_meeting=None, meeting_recording=None, on_meetings_folder=None,
+                 on_meeting_mute=None, meeting_muted=None):
         self._on_meeting = on_meeting
+        self._on_meeting_mute = on_meeting_mute
+        self._meeting_muted = meeting_muted or (lambda: False)
         self._meeting_recording = meeting_recording or (lambda: False)
         self._on_meetings_folder = on_meetings_folder
         self._on_toggle = on_toggle
@@ -44,6 +47,11 @@ class TrayManager:
             items.append(pystray.MenuItem(
                 lambda _: "Stop meeting recording" if self._meeting_recording() else "Record meeting",
                 lambda: self._on_meeting()))
+        if self._on_meeting_mute:
+            # Only while a meeting records; checked while the mic is left out.
+            items.append(pystray.MenuItem(
+                "Mute my mic in the meeting", lambda: self._on_meeting_mute(),
+                checked=lambda _: self._meeting_muted(), visible=lambda _: self._meeting_recording()))
         if self._on_meetings_folder:
             items.append(pystray.MenuItem("Open meetings folder", lambda: self._on_meetings_folder()))
         items.append(pystray.Menu.SEPARATOR)

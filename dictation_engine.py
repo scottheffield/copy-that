@@ -74,6 +74,7 @@ DEFAULT_CONFIG = {
     "bubble_position": "cursor",     # cursor: open takes at the caret when known; top: the pill's spot
     # Meeting recordings: one folder per meeting. Kept out of synced folders by default.
     "meetings_dir": str(Path.home() / "CopyThat Meetings"),
+    "meeting_skip_dictation": True,  # Leave dictation takes out of the meeting's mic track
     "meeting_chip_position": None,   # [right, top] in screen px once the chip is dragged
     "meeting_consent_seen": False,   # The consent note shows under the chip until dismissed
     "main_window_page": "General",   # Page the tray's left-click reopens: History or a settings page

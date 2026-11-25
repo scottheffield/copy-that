@@ -74,7 +74,7 @@ class GUIApp:
         self._chip = MeetingChip(
             self._root, on_stop=self._toggle_meeting, on_open=self._open_last_transcript,
             on_consent_seen=self._consent_seen, on_moved=self._chip_moved,
-            position=tuple(position) if position else None)
+            position=tuple(position) if position else None, on_mute=self._set_meeting_muted)
         self._chip_poll_id = None
 
         # Tray
@@ -93,6 +93,8 @@ class GUIApp:
             on_meeting=lambda: self._events.put(("action", self._toggle_meeting)),
             meeting_recording=self._meeting_recording,
             on_meetings_folder=lambda: self._events.put(("action", self._open_meetings_folder)),
+            on_meeting_mute=lambda: self._events.put(("action", lambda: self._set_meeting_muted(None))),
+            meeting_muted=lambda: bool(self._meeting_recording() and self._meeting.muted),
         )
 
         # Lazy-created windows
@@ -512,7 +514,8 @@ class GUIApp:
             return MeetingSession(
                 root, lambda: self._engine.speech_model, lambda: self._engine.active,
                 mic_device=self._meeting_mic(), language=self._config.get("language", "en"), log=log,
-                on_done=lambda folder, ok: self._events.put(("action", lambda: self._meeting_done(folder, ok))))
+                on_done=lambda folder, ok: self._events.put(("action", lambda: self._meeting_done(folder, ok))),
+                dictating=self._dictation_left_out)
 
         root, fallback = self._config["meetings_dir"], DEFAULT_CONFIG["meetings_dir"]
         try:
@@ -556,8 +559,22 @@ class GUIApp:
             self._chip_poll_id = None
             return
         self._chip.update(session.elapsed, *session.levels(), problem=session.problem,
-                          devices=session.devices())
+                          devices=session.devices(), muted=session.muted)
         self._chip_poll_id = self._root.after(150, self._poll_chip)
+
+    def _dictation_left_out(self):
+        """Called from the mic's audio thread: true while a dictation take records and
+        the setting keeps dictation out of meeting transcripts."""
+        return self._engine.is_recording and self._config.get("meeting_skip_dictation", True)
+
+    def _set_meeting_muted(self, on):
+        """Mute or unmute the meeting's mic; on=None toggles (the tray item)."""
+        if not self._meeting_recording():
+            return
+        session = self._meeting
+        session.set_muted(not session.muted if on is None else on)
+        self._chip.muted = session.muted
+        self._tray.update_state(self._tray._state)
 
     def _stop_meeting(self):
         session = self._meeting

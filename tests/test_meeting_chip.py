@@ -144,3 +144,42 @@ def test_hover_names_the_devices_and_warns_when_they_differ(chip):
     assert {"Me: Microphone (EMEET)", "Others: Speakers (Laptop)", "Separate mic and speaker"} <= set(texts(chip))
     chip._set_hover(False)
     assert not any(t.startswith("Me: ") for t in texts(chip))
+
+
+def test_mic_button_mutes_and_shows_it(root):
+    muted = []
+    chip = MeetingChip(root, on_mute=muted.append, position=(1900, 20))
+    try:
+        chip.show_recording()
+        chip.update(10, 0.4, 0.2)
+        assert "Me" in texts(chip) and "Muted" not in texts(chip)
+        click(chip, "_toggle_mute")
+        assert muted == [True] and chip.muted
+        assert "Muted" in texts(chip) and "Me" not in texts(chip) and "Others" in texts(chip)
+        chip.update(11, 0.0, 0.2, muted=True)   # The app's poll keeps it muted
+        assert "Muted" in texts(chip)
+        click(chip, "_toggle_mute")
+        assert muted == [True, False] and not chip.muted
+    finally:
+        chip._win.destroy()
+
+
+def test_mic_button_tooltip_says_what_it_does(chip):
+    chip.show_recording()
+    chip.update(10, 0.1, 0.1, devices=("Mic", "Speakers", None))
+    x1, y1, x2, y2 = chip._mic_box
+    chip._set_hover(True)
+    chip._on_motion(SimpleNamespace(x=(x1 + x2) // 2, y=26))
+    assert "Mute your mic in this meeting" in texts(chip)
+    assert not any(t.startswith("Me: ") for t in texts(chip))
+    chip.update(11, 0.1, 0.1, muted=True)
+    assert "Unmute your mic" in texts(chip)
+    chip._on_motion(SimpleNamespace(x=x2 + 40, y=26))
+    assert "Unmute your mic" not in texts(chip)
+
+
+def test_a_new_meeting_starts_unmuted(chip):
+    chip.show_recording()
+    chip.update(10, 0, 0, muted=True)
+    chip.show_recording()
+    assert not chip.muted and "Me" in texts(chip)

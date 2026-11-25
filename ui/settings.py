@@ -477,6 +477,12 @@ class SettingsWindow:
             variable=self._media_var, **chk_opts,
         ).pack(anchor="w", pady=2)
 
+        self._skip_dictation_var = ctk.BooleanVar(value=self._config.get("meeting_skip_dictation", True))
+        ctk.CTkCheckBox(
+            toggles_frame, text="Leave dictation out of meeting transcripts",
+            variable=self._skip_dictation_var, **chk_opts,
+        ).pack(anchor="w", pady=2)
+
         self._enter_var =ctk.BooleanVar(value=self._config.get("auto_enter", False))
         ctk.CTkCheckBox(
             toggles_frame, text="Press Enter after paste (auto-submit)",
@@ -685,6 +691,7 @@ class SettingsWindow:
         new_config["take_log_enabled"] = self._log_var.get()
         new_config["screen_context"] = self._screen_var.get()
         new_config["pause_media"] = self._media_var.get()
+        new_config["meeting_skip_dictation"] = self._skip_dictation_var.get()
         if cleanup == "custom":
             new_config["cleanup_model_path"] = self._cleanup_path_var.get().strip()
         elif cleanup != "off":
