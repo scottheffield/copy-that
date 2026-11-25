@@ -85,6 +85,59 @@ def diarize(samples, stopped=lambda: False, report=lambda fraction: None):
     return [(s.start, s.end, s.speaker) for s in result.sort_by_start_time()]
 
 
+def _diarize_child(path, conn):
+    """Runs in its own process: diarize one WAV, sending progress, then the segments."""
+    try:
+        from windows_io import set_process_priority
+        set_process_priority("below_normal")  # Dictation and the rest of the PC come first
+    except Exception:
+        pass
+    try:
+        segments = diarize(read_track(path), report=lambda fraction: conn.send(("progress", fraction)))
+        conn.send(("done", segments))
+    except BaseException as error:
+        conn.send(("error", f"{type(error).__name__}: {error}"))
+    finally:
+        conn.close()
+
+
+def diarize_apart(path, stopped=lambda: False, report=lambda fraction: None):
+    """diarize() on a WAV file in a separate low-priority process.
+
+    sherpa-onnx holds the GIL while it works, which froze the app's window and
+    hotkey for minutes on a long meeting. In its own process it can't, and
+    stopping it is immediate."""
+    import multiprocessing
+    context = multiprocessing.get_context("spawn")
+    receive, send = context.Pipe(duplex=False)
+    process = context.Process(target=_diarize_child, args=(str(path), send),
+                              name="copythat-speakers", daemon=True)
+    process.start()
+    send.close()  # Only the child writes; recv() then sees EOF if it dies
+    try:
+        while True:
+            if stopped():
+                raise Stopped()
+            if not receive.poll(0.25):
+                continue
+            try:
+                kind, value = receive.recv()
+            except EOFError:
+                process.join(1)
+                raise RuntimeError(f"Speaker separation exited ({process.exitcode})") from None
+            if kind == "progress":
+                report(value)
+            elif kind == "done":
+                return value
+            else:
+                raise RuntimeError(value)
+    finally:
+        if process.is_alive():
+            process.terminate()
+        process.join(2)
+        receive.close()
+
+
 def assign(times, segments, nearest=NEAREST_SECONDS):
     """The speaker id for each word time, or None when no one was found near it.
 
@@ -129,9 +182,11 @@ def _set_status(folder, status, **extra):
     return meta
 
 
-def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=diarize):
-    """Label the speakers in one meeting's transcript. Returns the final status."""
+def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
+    """Label the speakers in one meeting's transcript. Returns the final status.
+    diarize_fn(wav path, stopped, report) returns segments; by default a separate process."""
     folder = Path(folder)
+    diarize_fn = diarize_fn or diarize_apart
     try:
         mic_words, others_words, heard = read_words(folder)
     except (OSError, ValueError, KeyError, TypeError):
@@ -145,9 +200,7 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=diarize):
     started = time.monotonic()
     _progress[folder] = 0.0
     try:
-        samples = read_track(folder / f"{track}.wav")
-        segments = diarize_fn(samples, stopped, lambda f: _progress.__setitem__(folder, f))
-        del samples
+        segments = diarize_fn(folder / f"{track}.wav", stopped, lambda f: _progress.__setitem__(folder, f))
         ids = assign([w.time for w in words], segments)
     except Stopped:
         _set_status(folder, "pending")  # Runs again on the next launch

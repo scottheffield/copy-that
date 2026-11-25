@@ -909,4 +909,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()  # The packaged app also runs speaker separation (speakers.py)
     main()

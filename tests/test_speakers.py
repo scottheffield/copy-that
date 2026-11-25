@@ -53,7 +53,7 @@ def test_find_speakers_relabels_others_and_keeps_me(tmp_path):
     mic = words("hi all", 0.0)
     others = words("thanks for having me", 2.0) + words("glad to be here", 6.0)
     folder = make_meeting(tmp_path, mic, others)
-    fake = lambda samples, stopped, report: [(1.9, 4.0, 0), (5.9, 8.0, 1)]
+    fake = lambda path, stopped, report: [(1.9, 4.0, 0), (5.9, 8.0, 1)]
     assert speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake) == "done"
     lines = meetings.transcript_lines(meetings.read_transcript(folder))
     assert [(s, t) for _, s, t in lines] == [("Me", "hi all"), ("Speaker 1", "thanks for having me"),
@@ -64,7 +64,7 @@ def test_find_speakers_relabels_others_and_keeps_me(tmp_path):
 def test_find_speakers_splits_a_line_when_the_speaker_changes(tmp_path):
     others = words("one two three four", 1.0)  # No pause, so one line before labeling
     folder = make_meeting(tmp_path, [], others)
-    fake = lambda samples, stopped, report: [(0.9, 1.5, 0), (1.6, 3.0, 1)]
+    fake = lambda path, stopped, report: [(0.9, 1.5, 0), (1.6, 3.0, 1)]
     speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
     lines = meetings.transcript_lines(meetings.read_transcript(folder))
     assert [(s, t) for _, s, t in lines] == [("Speaker 1", "one two"), ("Speaker 2", "three four")]
@@ -74,11 +74,11 @@ def test_in_person_meeting_labels_the_mic(tmp_path):
     mic = words("good morning", 0.0) + words("morning", 3.0)
     folder = make_meeting(tmp_path, mic, [], heard=False)
     seen = []
-    def fake(samples, stopped, report):
-        seen.append(len(samples))
+    def fake(path, stopped, report):
+        seen.append(path.name)
         return [(0.0, 1.0, 0), (2.9, 3.5, 1)]
     speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
-    assert seen == [16000]
+    assert seen == ["mic.wav"]
     speakers_seen = [s for _, s, _ in meetings.transcript_lines(meetings.read_transcript(folder))]
     assert speakers_seen == ["Speaker 1", "Speaker 2"]
     assert meetings.read_meta(folder)["speakers"]["track"] == "mic"
@@ -225,3 +225,23 @@ def test_transcribe_progress_counts_both_tracks(tmp_path):
             return self.d, self.t
     job._tracks = {"mic": Part(100, 100), "others": Part(0, 100)}
     assert job.progress() == 0.5
+
+
+def test_separation_runs_in_its_own_process_and_stops_at_once(tmp_path):
+    import time
+    import pytest
+    import speaker_models
+    if speaker_models.problem():
+        pytest.skip("speaker models not fetched")
+    path = tmp_path / "others.wav"
+    rng = np.random.default_rng(0)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000)
+        w.writeframes((rng.standard_normal(16000 * 3) * 300).astype(np.int16).tobytes())
+    seen = []
+    segments = speakers.diarize_apart(path, report=seen.append)
+    assert isinstance(segments, list)
+    started = time.monotonic()
+    with pytest.raises(speakers.Stopped):
+        speakers.diarize_apart(path, stopped=lambda: True)
+    assert time.monotonic() - started < 5

@@ -123,7 +123,7 @@ def mask_start_menu():
     send_keys([(0xE8, False), (0xE8, True)])
 
 
-PRIORITY_CLASSES = {"normal": 0x20, "above_normal": 0x8000, "high": 0x80}
+PRIORITY_CLASSES = {"below_normal": 0x4000, "normal": 0x20, "above_normal": 0x8000, "high": 0x80}
 
 
 def set_process_priority(level):
