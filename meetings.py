@@ -249,6 +249,12 @@ class MicCapture:
     """
 
     SILENT_SECONDS = 5  # Exact zeros this long means the mic delivers nothing
+    # Clock fill: the mic track came out 0.7-1.8 s short of the meeting, so the
+    # Me lines drifted early. When the samples received fall behind the clock by
+    # FILL_AFTER seconds on FILL_BLOCKS blocks in a row (not a burst catching up),
+    # the missing time is written as silence where it went missing.
+    FILL_AFTER = 0.25
+    FILL_BLOCKS = 5
     REPORT_SECONDS = 60  # How often the log compares recorded audio with the clock
 
     def __init__(self, track, device=None, log=print, mutes=None):
@@ -264,6 +270,10 @@ class MicCapture:
         self.name = None
         self._started = None
         self._flags = {}  # PortAudio status flags seen, e.g. input overflow, with counts
+        self._t0 = None        # Capture start of the first block: the clock the track keeps
+        self._received = 0     # Samples received plus silence filled, since _t0
+        self._behind = 0       # Blocks in a row that arrived behind the clock
+        self.filled = []       # (seconds into the track, seconds filled), for the log
 
     def start(self):
         import sounddevice as sd
@@ -293,10 +303,42 @@ class MicCapture:
         start = now - frames / RATE
         self.mutes.sample(start)
         with self._lock:
-            self._blocks.append((start, now, indata[:, 0].copy()))
+            if self._t0 is None:
+                self._t0 = start
+            block = (start, now, indata[:, 0].copy())
+            gap = self._clock_gap(now, frames)
+            if self._behind == 1:
+                self._first_behind = (block, self._received)
+            if gap:
+                self._fill(gap, block)
+            self._blocks.append(block)
+            self._received += frames
             if status:
                 key = str(status)
                 self._flags[key] = self._flags.get(key, 0) + 1
+
+    def _fill(self, gap, block):
+        """Write gap samples of silence where the shortfall began: before the first block
+        that arrived behind the clock, if it is still held back, else before this one."""
+        first, at = getattr(self, "_first_behind", (None, self._received))
+        index = next((i for i, held in enumerate(self._blocks) if held is first), None)
+        if index is None:
+            first, at, index = block, self._received, len(self._blocks)
+        silence = (first[0] - gap / RATE, first[0], np.zeros(gap, dtype=np.float32))
+        self._blocks.insert(index, silence)
+        self._received += gap
+        self.filled.append((round(at / RATE, 1), round(gap / RATE, 2)))
+
+    def _clock_gap(self, now, frames):
+        """Samples of silence to write before this block, when the mic has fallen behind the clock."""
+        deficit = (now - self._t0) * RATE - (self._received + frames)
+        if deficit < self.FILL_AFTER * RATE:
+            self._behind = 0
+            return 0
+        self._behind += 1
+        if self._behind < self.FILL_BLOCKS:
+            return 0
+        return int(deficit - 0.05 * RATE)  # Leave a little slack for delivery jitter
 
     @property
     def silent(self):
@@ -323,9 +365,12 @@ class MicCapture:
         with self._lock:
             flags = dict(self._flags)
             held = sum(len(block) for _, _, block in self._blocks) / RATE
+            filled = list(self.filled)
         recorded = self.track.seconds + held
+        fill = sum(seconds for _, seconds in filled)
         self._log(f"Meeting: mic recorded {recorded:.1f}s of {elapsed:.1f}s "
-                  f"(behind {elapsed - recorded:.2f}s)" + (f", flags {flags}" if flags else ""))
+                  f"(behind {elapsed - recorded:.2f}s)" + (f", flags {flags}" if flags else "")
+                  + (f", filled {fill:.2f}s of gaps at {[at for at, _ in filled][-5:]}s" if filled else ""))
 
     def _flush(self, final=False, now=None):
         """Write blocks old enough that a dictation take starting now can't reach back over them."""

@@ -469,3 +469,41 @@ def test_session_mute_needs_a_started_meeting_and_survives_in_meta(tmp_path):
     session.set_muted(False)
     assert not session.muted
     session._close_tracks()
+
+
+def test_mic_track_keeps_time_when_audio_goes_missing(tmp_path):
+    mic, track = _mic(tmp_path)
+    block = np.full((1600, 1), 0.1, dtype=np.float32)
+    t = 100.0
+    for _ in range(20):                       # 2 s delivered on time
+        t += 0.1
+        mic._on_audio(block, 1600, None, None, now=t)
+    t += 1.0                                  # 1 s of audio never arrives
+    for _ in range(20):
+        t += 0.1
+        mic._on_audio(block, 1600, None, None, now=t)
+    mic._flush(final=True)
+    assert abs(track.seconds - 5.0) <= 0.06   # The clock's 5 s, not the 4 s received
+    assert len(mic.filled) == 1 and abs(mic.filled[0][0] - 2.0) < 0.01 and abs(mic.filled[0][1] - 0.95) < 0.01
+    audio = track[0:len(track)]
+    assert audio[:int(2.0 * RATE)].all()
+    assert not audio[int(2.0 * RATE):int(2.94 * RATE)].any()  # The gap sits where audio went missing
+    assert audio[int(2.96 * RATE):].all()
+    track.close()
+
+
+def test_mic_track_ignores_late_blocks_that_catch_up(tmp_path):
+    mic, track = _mic(tmp_path)
+    block = np.full((1600, 1), 0.1, dtype=np.float32)
+    t = 100.0
+    for i in range(60):
+        if i in (20, 40):
+            t += 0.4                          # A stall: blocks arrive late...
+        elif i in (21, 22, 23, 24, 41, 42, 43, 44):
+            t += 0.0                          # ...then the buffered ones arrive at once
+        else:
+            t += 0.1
+        mic._on_audio(block, 1600, None, None, now=t)
+    mic._flush(final=True)
+    assert mic.filled == [] and abs(track.seconds - 6.0) < 1e-6
+    track.close()
