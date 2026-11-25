@@ -298,6 +298,9 @@ class GUIApp:
         if "pasting" in data:
             self._overlay.clear_balloon()
             return
+        if "mic_silent" in data:
+            self._overlay.set_mic_silent(data["mic_silent"])
+            return
         if "field" in data:
             field = data["field"]
             self._overlay.set_field(field.editable, field.caret)

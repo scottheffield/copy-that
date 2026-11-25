@@ -172,3 +172,15 @@ def test_bubble_with_no_caret_keeps_its_left_edge_as_it_widens(overlay):
     overlay.set_live_text("word " * 60)
     x2, y2, w2, h2 = overlay.placed[-1]
     assert w2 > w and x2 == x
+
+
+def test_silent_mic_warning_shows_during_a_take_and_clears(overlay):
+    overlay.show_recording()
+    overlay.set_field(True, None)
+    overlay.set_mic_silent(True)
+    assert overlay.MIC_SILENT_HINT in [line[0] for line in overlay._text_lines()]
+    overlay.set_mic_silent(False)
+    assert overlay.MIC_SILENT_HINT not in [line[0] for line in overlay._text_lines()]
+    overlay.set_mic_silent(True)
+    overlay.show_recording()  # The next take starts without it
+    assert overlay.MIC_SILENT_HINT not in [line[0] for line in overlay._text_lines()]

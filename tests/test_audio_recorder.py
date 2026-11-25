@@ -154,3 +154,74 @@ class TestCuePlayer:
         second.callback(out, 16, None, None)
         assert out[:10, 0].tolist() == [1.0] * 10
         player.release()
+
+
+class TestAudioRecorderSilentMic:
+    """#43: a mic that drops to exact zeros mid-take is reported, and its return too."""
+
+    def _recorder(self, monkeypatch):
+        import types, sys
+        streams = []
+
+        class Stream:
+            def __init__(self, callback, **kwargs):
+                self.callback = callback
+                streams.append(self)
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+            def close(self):
+                pass
+
+        monkeypatch.setitem(sys.modules, "sounddevice", types.SimpleNamespace(InputStream=Stream))
+        events = []
+        recorder = AudioRecorder(sample_rate=16000, on_silence=events.append, silence_seconds=1.0)
+        recorder.start()
+        stream = streams[-1]
+
+        def feed(seconds, value):
+            for _ in range(int(seconds * 10)):
+                stream.callback(np.full((1600, 1), value, np.float32), 1600, None, None)
+        return recorder, feed, events
+
+    def test_zeros_while_the_device_wakes_are_not_a_dropout(self, monkeypatch):
+        recorder, feed, events = self._recorder(monkeypatch)
+        feed(2.0, 0.0)
+        assert events == [] and recorder.silent_at is None
+        recorder.stop()
+
+    def test_silence_after_sound_warns_once_and_clears_when_sound_returns(self, monkeypatch):
+        recorder, feed, events = self._recorder(monkeypatch)
+        feed(1.5, 0.1)
+        feed(0.9, 0.0)
+        assert events == []                  # Shorter than silence_seconds: a pause, not a dropout
+        feed(0.5, 0.0)
+        assert events == [True] and recorder.silent_at == 1.5
+        feed(2.0, 0.0)
+        assert events == [True]              # Once, not every block
+        feed(0.2, 0.1)
+        assert events == [True, False]
+        recorder.stop()
+
+    def test_a_muted_speakerphone_counts_as_silent(self, monkeypatch):
+        # The EMEET's mute button sends 1-LSB dither rather than exact zeros.
+        recorder, feed, events = self._recorder(monkeypatch)
+        feed(0.5, 0.1)
+        feed(1.2, 1 / 32768)
+        assert events == [True]
+        feed(0.2, 3 / 32768)                 # A real quiet room is louder than that
+        assert events == [True, False]
+        recorder.stop()
+
+    def test_a_new_take_starts_clean(self, monkeypatch):
+        recorder, feed, events = self._recorder(monkeypatch)
+        feed(0.5, 0.1)
+        feed(1.5, 0.0)
+        recorder.stop()
+        recorder.start()
+        assert recorder.silent_at is None and not recorder._silent
+        recorder.stop()

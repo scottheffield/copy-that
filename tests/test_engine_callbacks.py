@@ -396,3 +396,24 @@ class TestStuckModifiers:
         with patch("dictation_runtime.modifiers_down", return_value=False):
             assert app._modifiers_down() is False
         app._hook.release_stuck.assert_called_once_with()
+
+
+class TestSilentMic:
+    """#43: the runtime tells the UI and the take log when the mic goes silent mid-take."""
+
+    def test_silence_marks_the_take_and_reaches_the_ui(self):
+        from types import SimpleNamespace
+        app = DictationApp({**DEFAULT_CONFIG, "beep_on_start": False, "vad_enabled": False})
+        assert app.recorder.on_silence == app._mic_silence
+        received = []
+        app.add_callback(lambda state, data: received.append(data))
+        app._mic_silence(True)           # No take recording: nothing to report
+        assert received == []
+        take = SimpleNamespace(mic_silent_at=None)
+        app._takes._recording = take
+        app.recorder.silent_at = 19.1
+        app._mic_silence(True)
+        assert take.mic_silent_at == 19.1 and received[-1] == {"mic_silent": True}
+        app._mic_silence(False)
+        assert received[-1] == {"mic_silent": False} and take.mic_silent_at == 19.1
+        app._takes._recording = None

@@ -44,6 +44,10 @@ class DictationRuntime:
         self._recorder = recorder_factory(sample_rate=config["sample_rate"],
             max_record_seconds=config.get("max_record_seconds"), input_device=config.get("input_device"))
         self._recorder.on_warning = self._limit_warning
+        self._recorder.on_silence = self._mic_silence
+        # The EMEET speakerphone sends exact zeros while you're quiet, so a pause can look
+        # like a dead mic: saved takes had pauses up to 5.9 s; the one real dropout was 21 s.
+        self._recorder.silence_seconds = config.get("mic_silent_seconds", 6.0)
         self._recorder.warning_seconds = config.get("limit_warning_seconds", 15)
         self._paste = paste
         self._takes = TakeQueue(self._recorder, self._transcribe, self._clean, paste,
@@ -247,6 +251,19 @@ class DictationRuntime:
                     return
                 self._stopped.wait(interval)
         threading.Thread(target=loop, name="keep-warm", daemon=True).start()
+
+    def _mic_silence(self, silent):
+        """The mic dropped to exact zeros mid-take (#43), or came back."""
+        take = self._takes._recording
+        if take is None:
+            return
+        if silent:
+            at = getattr(self._recorder, "silent_at", None)
+            take.mic_silent_at = at
+            self.log(f"Mic went silent {at}s into the take")
+        else:
+            self.log("Mic sound is back")
+        self._set_state(self.state, {"mic_silent": silent})
 
     def _limit_warning(self):
         if not self.is_recording:
