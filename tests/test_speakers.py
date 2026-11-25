@@ -2,12 +2,19 @@ import json
 import wave
 
 import numpy as np
+import pytest
 
 import meetings
 import speakers
 from audio_chunks import TimedWord
 
 META = {"title": "Panel", "started": "2026-11-24T16:30:00", "duration_seconds": 30, "status": "done"}
+
+
+@pytest.fixture(autouse=True)
+def short_turns_count(monkeypatch):
+    """These tests use turns of a few seconds; only the stray tests use the real minimum."""
+    monkeypatch.setattr(speakers, "MIN_SPEAKER_SECONDS", 0.0)
 
 
 def words(text, start, step=0.4):
@@ -246,3 +253,20 @@ def test_separation_runs_in_its_own_process_and_stops_at_once(tmp_path):
     with pytest.raises(speakers.Stopped):
         speakers.diarize_apart(path, stopped=lambda: True)
     assert time.monotonic() - started < 5
+
+
+def test_a_speaker_heard_for_seconds_is_a_stray():
+    turns = [(0.0, 30.0, 0), (30.0, 31.5, 1), (31.5, 60.0, 0), (60.0, 75.0, 2)]
+    assert speakers.drop_strays(turns, 10.0) == [(0.0, 30.0, 0), (31.5, 60.0, 0), (60.0, 75.0, 2)]
+    assert speakers.drop_strays([(0.0, 2.0, 0), (2.0, 3.0, 1)], 10.0) == [(0.0, 2.0, 0)]  # Longest kept
+    assert speakers.drop_strays([]) == []
+
+
+def test_stray_reply_joins_the_speaker_around_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(speakers, "MIN_SPEAKER_SECONDS", 10.0)
+    others = words("so here is the plan", 0.0) + words("yeah", 31.0) + words("and then we ship", 40.0)
+    folder = make_meeting(tmp_path, [], others)
+    fake = lambda path, stopped, report: [(0.0, 30.5, 0), (30.8, 31.6, 1), (39.0, 70.0, 0)]
+    speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
+    assert meetings.read_meta(folder)["speakers"]["count"] == 1
+    assert "Speaker 2" not in meetings.read_transcript(folder)

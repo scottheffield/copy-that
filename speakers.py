@@ -25,6 +25,7 @@ MIN_DURATION_ON = 0.3
 MIN_DURATION_OFF = 0.5
 NUM_THREADS = 2
 NEAREST_SECONDS = 1.0  # A word outside every segment takes a segment this close
+MIN_SPEAKER_SECONDS = 10.0  # A "speaker" with less speech than this is a stray (#44)
 
 
 class Stopped(Exception):
@@ -142,6 +143,23 @@ def diarize_apart(path, stopped=lambda: False, report=lambda fraction: None):
         receive.close()
 
 
+def drop_strays(segments, minimum=None):
+    """Segments without the speakers heard for less than minimum seconds in all.
+
+    Separation sometimes splits a few short replies ("Yeah.") off as another
+    speaker, which made a one-on-one call read as two people. Their words go to
+    whoever is talking around them. The speaker heard longest is always kept."""
+    minimum = MIN_SPEAKER_SECONDS if minimum is None else minimum
+    totals = {}
+    for start, end, speaker in segments:
+        totals[speaker] = totals.get(speaker, 0.0) + (end - start)
+    if not totals:
+        return segments
+    longest = max(totals, key=totals.get)
+    keep = {speaker for speaker, total in totals.items() if total >= minimum} | {longest}
+    return [s for s in segments if s[2] in keep]
+
+
 def assign(times, segments, nearest=NEAREST_SECONDS):
     """The speaker id for each word time, or None when no one was found near it.
 
@@ -207,7 +225,7 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
     # "Finding speakers…" with a moving bar meanwhile.
     try:
         segments = diarize_fn(folder / f"{track}.wav", stopped, lambda f: _progress.__setitem__(folder, f))
-        ids = assign([w.time for w in words], segments)
+        ids = assign([w.time for w in words], drop_strays(segments))
     except Stopped:
         _set_status(folder, "pending")  # Runs again on the next launch
         return "pending"
