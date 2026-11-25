@@ -570,10 +570,16 @@ class MeetingsPage:
 
         text = meetings.read_transcript(folder)
         busy = self._in_use(item)
+        try:
+            speakers_stopped = (meetings.read_meta(folder).get("speakers") or {}).get("status") == "interrupted"
+        except (OSError, ValueError, AttributeError):
+            speakers_stopped = False
+        # Unfinished work isn't restarted at launch (#66); Re-transcribe is the way on.
+        restart = not busy and (item["status"] == "interrupted" or speakers_stopped)
         actions = ctk.CTkFrame(page, fg_color="transparent")
         actions.pack(fill="x", padx=20)
         # Greyed while busy, so the progress bar is the only accent on the page.
-        copy = self._button(actions, "Copy as Markdown", None, primary=True,
+        copy = self._button(actions, "Copy as Markdown", None, primary=not restart,
                             state="normal" if text and not busy else "disabled")
         copy.configure(command=lambda: self._copy(folder, copy))
         self._button(actions, "Rename", lambda: (entry.focus_set(), entry.select_range(0, "end")))
@@ -581,7 +587,7 @@ class MeetingsPage:
                      state="normal" if text else "disabled")
         self._button(actions, "Open folder", lambda: self._open(folder))
         has_audio = (folder / "mic.wav").exists() or (folder / "others.wav").exists()
-        self._button(actions, "Re-transcribe", lambda: self._retranscribe(folder),
+        self._button(actions, "Re-transcribe", lambda: self._retranscribe(folder), primary=restart,
                      state="disabled" if busy or not has_audio or not self._provider else "normal")
         self._button(actions, "Delete", lambda: self._delete(folder, item),
                      state="disabled" if busy else "normal")
@@ -591,13 +597,17 @@ class MeetingsPage:
             "recording": "Recording now. The transcript appears here after you stop.",
             "transcribing": "Transcribing… The transcript appears here when it's ready.",
             "failed": "Transcription failed. Re-transcribe to try again.",
-            "interrupted": "The transcript wasn't finished. It finishes on the next launch, or Re-transcribe now.",
+            "interrupted": "The transcript didn't finish. Click Re-transcribe to finish it.",
         }.get(item["status"])
+        if text and item["status"] == "interrupted":
+            message = "The re-transcribe didn't finish. The transcript below is the previous one. "                       "Click Re-transcribe to finish it."
+        elif speakers_stopped and not busy:
+            message = "Finding speakers didn't finish. Click Re-transcribe to label the speakers."
         if text and item["status"] == "transcribing":
             message = "Re-transcribing… The transcript below is the previous one until this finishes."
         if text and progress and progress[0] != "transcribing":
             message = "Finding who spoke. The lines below get Speaker 1, Speaker 2 and so on when it's done."
-        if message and not (text and item["status"] == "done" and not progress):
+        if message and (speakers_stopped or not (text and item["status"] == "done" and not progress)):
             note = ctk.CTkLabel(page, text=message, text_color=theme.MUTED, justify="left", anchor="w")
             note.pack(fill="x", padx=20, pady=(0, 12))
             _wrap(note, page, 40)

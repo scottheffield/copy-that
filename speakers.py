@@ -227,7 +227,7 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
         segments = diarize_fn(folder / f"{track}.wav", stopped, lambda f: _progress.__setitem__(folder, f))
         ids = assign([w.time for w in words], drop_strays(segments))
     except Stopped:
-        _set_status(folder, "pending")  # Runs again on the next launch
+        _set_status(folder, "pending")  # Marked interrupted on the next launch (#66)
         return "pending"
     except Exception as error:
         log(f"Meeting: finding speakers failed ({type(error).__name__}: {error})")

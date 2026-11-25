@@ -270,3 +270,35 @@ def test_stray_reply_joins_the_speaker_around_it(tmp_path, monkeypatch):
     speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
     assert meetings.read_meta(folder)["speakers"]["count"] == 1
     assert "Speaker 2" not in meetings.read_transcript(folder)
+
+
+def test_launch_restarts_nothing_and_says_what_did_not_finish(tmp_path):
+    import queue
+    import threading
+    import app as app_module
+    from dictation_engine import DEFAULT_CONFIG
+    labeling = make_meeting(tmp_path, [], words("a b", 1.0))
+    meetings.write_meta(labeling, {**META, "speakers": {"status": "running"}})
+    recording = tmp_path / "2026-11-24 1700"
+    recording.mkdir()
+    meetings.write_meta(recording, {**META, "status": "transcribing"})
+    gui = app_module.GUIApp.__new__(app_module.GUIApp)
+    gui._config = {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}
+    gui._events, gui._closing, gui._meeting = queue.Queue(), False, None
+    gui._speaker_jobs, gui._speaker_folder, gui._speaker_lock = [], None, threading.Lock()
+    notes, queued = [], []
+    gui._notify = notes.append
+    gui._refresh_meetings = lambda: None
+    gui._find_speakers_later = queued.append
+    gui._note_interrupted_meetings()
+    for _ in range(100):
+        if gui._events.qsize() >= 2:
+            break
+        threading.Event().wait(0.02)
+    while not gui._events.empty():
+        gui._events.get()[1]()
+    assert notes == [app_module.interrupted_notice(2)] and queued == []
+    assert meetings.read_meta(labeling)["speakers"] == {"status": "interrupted"}
+    assert meetings.read_meta(recording)["status"] == "interrupted"
+    assert meetings.speakers_unfinished(tmp_path) == []
+    assert "A meeting didn't" in app_module.interrupted_notice(1)

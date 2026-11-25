@@ -459,3 +459,22 @@ def test_long_meeting_folder_paths_are_shortened_in_the_middle(root):
     assert fitted.split(chr(92))[:2] == ["C:", chr(0x2026)] and fitted.endswith(chr(92) + "Meetings")
     assert font.measure(fitted) <= 300
     assert font.measure(_shorten_path("x" * 400, font, 120)) <= 120
+
+
+def test_unfinished_speakers_point_to_re_transcribe(root, tmp_path):
+    folder = make_meeting(tmp_path, "2026-11-25 1030", "2026-11-25T10:30:00", "Call",
+                          lines=[("Me", "Hello there.")])
+    from meetings import read_meta, write_meta
+    meta = read_meta(folder)
+    meta["speakers"] = {"status": "interrupted"}
+    write_meta(folder, meta)
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=FakeMeetings())
+    window.show("Meetings")
+    window._meetings_page.show_detail(folder)
+    root.update_idletasks()
+    texts = page_texts(window._pages["Meetings"])
+    assert any(t.startswith("Finding speakers didn't finish") for t in texts)
+    buttons = {b.cget("text"): b for b in all_widgets(window._pages["Meetings"]) if isinstance(b, ctk.CTkButton)}
+    assert buttons["Re-transcribe"].cget("fg_color") == theme.ACCENT
+    assert buttons["Copy as Markdown"].cget("fg_color") != theme.ACCENT
+    window._win.destroy()

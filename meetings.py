@@ -766,6 +766,13 @@ def unfinished(root, skip=None):
     return found
 
 
+def stop_speakers(folder):
+    """Speaker labeling a quit or crash stopped: it is not restarted; Re-transcribe redoes it."""
+    meta = read_meta(folder)
+    meta["speakers"] = {"status": "interrupted"}
+    write_meta(folder, meta)
+
+
 def speakers_unfinished(root):
     """Finished meetings whose speaker labels are still to do (a quit or crash stopped them)."""
     found = []
@@ -998,7 +1005,7 @@ class MeetingSession:
             self._log(f"Meeting: transcription failed ({type(error).__name__})")
             self.meta["status"] = "failed"
         if not ok and self.meta["status"] != "failed":
-            self.meta["status"] = "interrupted"  # Quit first; the next launch finishes it.
+            self.meta["status"] = "interrupted"  # Quit first; Re-transcribe finishes it.
         self._close_tracks()
         save_meta(self.folder, self.meta)
         self.finished.set()
@@ -1009,7 +1016,7 @@ class MeetingSession:
         self.others_track.close()
 
     def abandon(self):
-        """App is quitting: keep the audio, leave the transcript for the next launch."""
+        """App is quitting: keep the audio; Re-transcribe writes the transcript later."""
         self._closing.set()
         if self.meta["status"] == "recording":
             self._stop_capture()
@@ -1021,7 +1028,7 @@ class MeetingSession:
 
 
 def transcribe_folder(folder, get_model, busy, language="en", log=print, stopped=lambda: False):
-    """Transcribe a meeting from its WAV files, for a recording a quit or crash interrupted."""
+    """Transcribe a meeting from its WAV files (Re-transcribe)."""
     folder = Path(folder)
     meta = read_meta(folder)
     mic = WavTrack.existing(folder / "mic.wav")
