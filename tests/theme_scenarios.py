@@ -318,6 +318,41 @@ def test_meetings_page_lists_searches_and_renames(root, tmp_path):
     window._win.destroy()
 
 
+def test_retranscribing_meeting_shows_percent_and_explains_the_old_transcript(root, tmp_path):
+    folder = make_meeting(tmp_path, "2026-11-25 1030", "2026-11-25T10:30:00", "Call",
+                          lines=[("Me", "Hello there.")])
+    from meetings import read_meta, write_meta
+    meta = read_meta(folder)
+    meta["status"] = "transcribing"
+    write_meta(folder, meta)
+
+    class Busy(FakeMeetings):
+        def meeting_in_use(self, folder):
+            return True
+
+        def meeting_progress(self, folder):
+            return "transcribing", 0.09
+
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=Busy())
+    window.show("Meetings")
+    window._meetings_page.show_detail(folder)
+    root.update_idletasks()
+    texts = page_texts(window._pages["Meetings"])
+    assert "9%" in texts and "Hello there." in texts
+    assert any(t.startswith("Re-transcribing… The transcript below is the previous one") for t in texts)
+    copy = [b for b in all_widgets(window._pages["Meetings"])
+            if isinstance(b, ctk.CTkButton) and b.cget("text") == "Copy as Markdown"]
+    assert copy and copy[0].cget("state") == "disabled"
+    window._meetings_page._stop_progress()
+    window._win.destroy()
+
+
+def all_widgets(widget):
+    for child in widget.winfo_children():
+        yield child
+        yield from all_widgets(child)
+
+
 def test_meetings_page_empty_state(root, tmp_path):
     window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path / "none")}, [])
     window.show("Meetings")

@@ -133,6 +133,9 @@ class MeetingsPage:
         text = progress_text(progress)
         label.configure(text=" \u00b7 ".join([*parts, text]) if parts else text)
         if bar is not None and bar.winfo_exists():
+            percent = getattr(bar, "percent", None)
+            if percent is not None and percent.winfo_exists():
+                percent.configure(text="" if progress[1] is None else f"{int(progress[1] * 100)}%")
             if progress[1] is None:
                 if bar.cget("mode") != "indeterminate":
                     bar.configure(mode="indeterminate")
@@ -551,17 +554,24 @@ class MeetingsPage:
                                  font=ctk.CTkFont(size=13))
         meta_line.pack(anchor="w", padx=20, pady=(2, 4 if progress else 12))
         if progress is not None:
-            bar = ctk.CTkProgressBar(page, height=6, progress_color=theme.ACCENT, fg_color=theme.BORDER)
+            row = ctk.CTkFrame(page, fg_color="transparent")
+            row.pack(fill="x", padx=20, pady=(4, 12))
+            bar = ctk.CTkProgressBar(row, height=10, corner_radius=5, progress_color=theme.ACCENT,
+                                     fg_color=theme.BORDER)
             bar.set(0)
-            bar.pack(fill="x", padx=20, pady=(4, 12))
+            bar.percent = ctk.CTkLabel(row, text="", width=44, anchor="e", text_color=theme.TEXT,
+                                       font=ctk.CTkFont(size=13, weight="bold"))
+            bar.percent.pack(side="right", padx=(10, 0))
+            bar.pack(side="left", fill="x", expand=True)
             self._show_progress(folder, meta_line, parts, bar)
 
         text = meetings.read_transcript(folder)
         busy = self._in_use(item)
         actions = ctk.CTkFrame(page, fg_color="transparent")
         actions.pack(fill="x", padx=20)
+        # Greyed while busy, so the progress bar is the only accent on the page.
         copy = self._button(actions, "Copy as Markdown", None, primary=True,
-                            state="normal" if text else "disabled")
+                            state="normal" if text and not busy else "disabled")
         copy.configure(command=lambda: self._copy(folder, copy))
         self._button(actions, "Rename", lambda: (entry.focus_set(), entry.select_range(0, "end")))
         self._button(actions, "Open transcript", lambda: self._open(folder / "transcript.md"),
@@ -580,6 +590,8 @@ class MeetingsPage:
             "failed": "Transcription failed. Re-transcribe to try again.",
             "interrupted": "The transcript wasn't finished. It finishes on the next launch, or Re-transcribe now.",
         }.get(item["status"])
+        if text and item["status"] == "transcribing":
+            message = "Re-transcribing… The transcript below is the previous one until this finishes."
         if text and progress and progress[0] != "transcribing":
             message = "Finding who spoke. The lines below get Speaker 1, Speaker 2 and so on when it's done."
         if message and not (text and item["status"] == "done" and not progress):
