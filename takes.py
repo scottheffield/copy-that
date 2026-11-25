@@ -38,6 +38,7 @@ class Take:
     started: float = 0
     released: float = 0
     live: object = None  # LiveTranscript while recognition runs during the take
+    mic_silent_at: float | None = None  # Seconds in when the mic sent only zeros (#43)
     # Above "field", which shadows dataclasses.field from here on.
     screen_terms: list = field(default_factory=list)  # Names visible in the window at hotkey down
     field: str = ""      # Focused box, from the text field probe
@@ -302,7 +303,8 @@ class TakeQueue:
                  "field": take.field, "screen_terms": take.screen_terms, "timings": take.timings,
                  "model": take.config.get("model_size"), "actual_device": take.config.get("actual_device"),
                  "actual_decoder_device": take.config.get("actual_decoder_device"),
-                 "literal_mode": take.config.get("literal_mode", False)}
+                 "literal_mode": take.config.get("literal_mode", False),
+                 "mic_silent_at": take.mic_silent_at}
         with self._lock:
             self._history.append(copy.deepcopy(entry))
             self._history = self._history[-20:]

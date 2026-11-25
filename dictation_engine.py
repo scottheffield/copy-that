@@ -818,7 +818,8 @@ class AudioRecorder:
 
     def __init__(self, sample_rate: int = 16000, channels: int = 1,
                  max_record_seconds: float = None, input_device=None, on_timeout=None,
-                 on_warning=None, warning_seconds: float = 15):
+                 on_warning=None, warning_seconds: float = 15, on_silence=None,
+                 silence_seconds: float = 4.0):
         self.sample_rate = sample_rate
         self.channels = channels
         self.max_record_seconds = max_record_seconds
@@ -836,6 +837,15 @@ class AudioRecorder:
         self.on_timeout = on_timeout
         self.on_warning = on_warning
         self.warning_seconds = warning_seconds
+        # on_silence(True) once the mic, after waking, sends digital silence (peaks of
+        # SILENT_PEAK or less) for silence_seconds mid-take; on_silence(False) when sound
+        # returns. A dropped device sends exact zeros; the EMEET's mute button sends
+        # 1-LSB dither, and Windows isn't told it is muted. Runs on the audio thread.
+        self.on_silence = on_silence
+        self.silence_seconds = silence_seconds
+        self._zero_run = 0
+        self._silent = False
+        self.silent_at = None  # Seconds into the take when the mic went silent, or None
 
     def start(self):
         """Start recording."""
@@ -850,13 +860,19 @@ class AudioRecorder:
             self._frames = []
             self.recording = True
         self.live.clear()
+        self._zero_run, self._silent, self.silent_at = 0, False, None
+        recorded = [0]
 
         def callback(indata, frames, time_info, status):
             with self._lock:
                 if self.recording:
                     self._frames.append(indata.copy())
-            if not self.live.is_set() and indata.any():
-                self.live.set()
+            recorded[0] += frames
+            if not self.live.is_set():
+                if indata.any():
+                    self.live.set()
+                return  # Zeros while the device wakes are not a dropout
+            self._watch_silence(float(abs(indata).max()) > self.SILENT_PEAK, frames, recorded[0])
 
         device = self.input_device if self.input_device is not None else sound_mapper("Input")
         try:
@@ -888,6 +904,28 @@ class AudioRecorder:
                 self._warning_timer = threading.Timer(lead, self.on_warning)
                 self._warning_timer.daemon = True
                 self._warning_timer.start()
+
+    SILENT_PEAK = 2 / 32768  # At most 2 LSB: digital silence, not a quiet room
+
+    def _watch_silence(self, sound, frames, recorded):
+        if sound:
+            self._zero_run = 0
+            if self._silent:
+                self._silent = False
+                self._notify_silence(False)
+            return
+        self._zero_run += frames
+        if not self._silent and self._zero_run >= self.silence_seconds * self.sample_rate:
+            self._silent = True
+            self.silent_at = round((recorded - self._zero_run) / self.sample_rate, 1)
+            self._notify_silence(True)
+
+    def _notify_silence(self, silent):
+        if self.on_silence:
+            try:
+                self.on_silence(silent)
+            except Exception:
+                pass
 
     def _timeout_stop(self):
         """Called when max_record_seconds is reached."""

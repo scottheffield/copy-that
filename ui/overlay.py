@@ -81,6 +81,7 @@ class OverlayWindow:
         "toggle": "Click the stop button to finish",
     }
     NO_FIELD_HINT = "No text field  ·  Shift+Alt+Z pastes it later"
+    MIC_SILENT_HINT = "No sound from your mic  ·  check it isn't muted"
     RETAINED_HINT = "Click into a text field, then press Shift+Alt+Z"
 
     def __init__(self, root, on_toggle=None, on_close=None):
@@ -118,6 +119,7 @@ class OverlayWindow:
         self._rec_start = 0.0
         self._rec_hint = ""
         self._no_field = False
+        self._mic_silent = False
         self._anchor = None  # caret (left, top, right, bottom) of the destination field
         self._wave: deque[float] = deque(maxlen=26)
         self._show_balloon = True
@@ -463,7 +465,7 @@ class OverlayWindow:
         self._state = "recording"
         self._rec_start = time.time()
         self._rec_hint = self.HINTS["held"]
-        self._no_field, self._anchor = False, None
+        self._no_field, self._mic_silent, self._anchor = False, False, None
         self._wave.clear()
         self._bubble, self._revealed = True, False
         self._bubble_text, self._bubble_status = "", "recording"
@@ -478,6 +480,16 @@ class OverlayWindow:
             self._rec_hint = self.HINTS.get(mode, "")
             if self._revealed:
                 self._layout()
+
+    def set_mic_silent(self, silent):
+        """Warn in the bubble that the mic sends nothing; clear it when sound returns."""
+        if self._state != "recording" or silent == self._mic_silent:
+            return
+        self._mic_silent = silent
+        if self._revealed:
+            self._layout()
+        elif silent:
+            self._reveal()
 
     def set_field(self, editable, caret):
         """Where the text will land: open the bubble at the caret, or warn."""
@@ -630,6 +642,8 @@ class OverlayWindow:
         """(text, color, font) for the right side, top to bottom."""
         lines = []
         recording = self._state == "recording"
+        if recording and self._mic_silent:
+            lines.append((self.MIC_SILENT_HINT, self.RED, ("Segoe UI", 9, "bold")))  # Red: unlike the amber hints, speech is being lost
         if recording and self._no_field:
             lines.append((self.NO_FIELD_HINT, self.AMBER, ("Segoe UI", 9, "bold")))
         if self._bubble_text:
