@@ -1354,6 +1354,47 @@ def rename_meeting(folder, title):
     return meta
 
 
+FOLDER_TITLE_LENGTH = 60  # Characters of the title in a folder name, so paths stay short
+
+
+def folder_title(title):
+    """title made safe for a Windows folder name: no \\ / : * ? " < > | or control
+    characters, single spaces, no trailing dots or spaces, at most FOLDER_TITLE_LENGTH."""
+    cleaned = "".join(" " if c in '\\/:*?"<>|' or ord(c) < 32 else c for c in str(title))
+    cleaned = " ".join(cleaned.split())[:FOLDER_TITLE_LENGTH]
+    return cleaned.rstrip(". ")
+
+
+def titled_name(meta):
+    """The folder name for a meeting: its date and time, then its title (#57).
+    Untitled meetings keep the date-only name."""
+    base = f"{datetime.fromisoformat(meta['started']):%Y-%m-%d %H%M}"
+    title = folder_title(meta.get("title", ""))
+    return f"{base} {title}" if title and title != "Untitled" else base
+
+
+def retitle_folder(folder):
+    """Rename a meeting's folder to match its title. Returns the folder's path now.
+    OSError when Windows refuses (a file in it is open); the folder keeps its name."""
+    folder = Path(folder)
+    name = titled_name(read_meta(folder))
+    if folder.name == name:
+        return folder
+    target, n = folder.with_name(name), 2
+    while target.exists() and target != folder:
+        target, n = folder.with_name(f"{name} ({n})"), n + 1
+    if folder.name == target.name:
+        return folder
+    for attempt in range(5):
+        try:
+            folder.rename(target)
+            return target
+        except PermissionError:  # A virus scanner or the indexer briefly holds a file
+            if attempt == 4:
+                raise
+            time.sleep(0.1)
+
+
 def trash_folder(folder):
     """Move a meeting folder to the Recycle Bin. Returns True when it is gone."""
     import ctypes

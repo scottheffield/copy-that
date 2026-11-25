@@ -566,3 +566,29 @@ def test_speaker_menu_adds_moves_and_renames(root, tmp_path):
     assert lines[0][1] == "Scott" and provider.my_name == "Scott"
     page._close_menu()
     window._win.destroy()
+
+
+def test_renaming_a_meeting_moves_its_folder_and_the_page_follows(root, tmp_path):
+    import meetings
+    folder = make_meeting(tmp_path, "2026-11-24 1300", "2026-11-24T13:00:00", "Untitled",
+                          lines=[("Me", "Hello there.")])
+    holder = {}
+
+    class Renames(FakeMeetings):
+        def rename_meeting_folder(self, folder):
+            new = meetings.retitle_folder(folder)
+            holder["window"].meeting_moved(folder, new)
+            return new
+
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=Renames())
+    holder["window"] = window
+    window.show("Meetings")
+    page = window._meetings_page
+    page.show_detail(folder)
+    root.update()
+    page._rename(folder, "Design review", {"title": "Untitled"})
+    root.update()
+    new = tmp_path / "2026-11-24 1300 Design review"
+    assert new.exists() and not folder.exists()
+    assert page._detail == new and page._title_field.get() == "Design review"
+    window._win.destroy()

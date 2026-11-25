@@ -745,6 +745,17 @@ class MeetingsPage:
             return
         item["title"] = title
         self._status("Meeting renamed.", "#30D158")
+        renamer = getattr(self._provider, "rename_meeting_folder", None)
+        if renamer:
+            renamer(folder)  # The folder follows the title, now or once the meeting is idle (#57)
+
+    def meeting_moved(self, old, new):
+        """A meeting's folder was renamed (#57): keep showing it, at its new path."""
+        if self._detail == Path(old):
+            self._detail = Path(new)
+            self._pending = None
+        if self._page.winfo_exists():
+            self._page.after_idle(lambda: self._page.winfo_exists() and self.render(keep_scroll=True))
 
     def _copy(self, folder, button):
         text = meetings.read_transcript(folder)

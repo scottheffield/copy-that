@@ -40,6 +40,7 @@ class GUIApp:
 
     _meeting = None  # The current or last MeetingSession
     _retranscribing = frozenset()  # Replaced by a set in __init__; folders being re-transcribed
+    _folder_renames = frozenset()  # Replaced by a set in __init__; folders to retitle once idle (#57)
     _speaker_jobs, _speaker_folder = (), None  # Replaced in __init__; speaker labeling queue
     _speaker_lock = threading.Lock()
     _moving_meetings = False  # True while meetings move to a newly chosen folder
@@ -111,6 +112,7 @@ class GUIApp:
         # Lazy-created windows
         self._settings_win: SettingsWindow | None = None
         self._retranscribing = set()
+        self._folder_renames = set()
         self._speaker_jobs = []          # Meeting folders waiting for speaker labels, oldest first
         self._speaker_folder = None      # The folder being labeled now
         self._speaker_lock = threading.Lock()
@@ -656,8 +658,45 @@ class GUIApp:
             log(f"Could not save settings ({type(error).__name__})")
 
     def _refresh_meetings(self):
+        self._rename_waiting_folders()
         if self._settings_win:
             self._settings_win.refresh_meetings()
+
+    # -- Folder names follow titles (#57) ---------------------------------------
+
+    def rename_meeting_folder(self, folder):
+        """Give a meeting's folder its title: now, or once the meeting is idle (Windows can't
+        rename a folder while its files are open). Returns the folder's path now."""
+        folder = Path(folder)
+        if self.meeting_in_use(folder):
+            self._folder_renames.add(folder)
+            return folder
+        return self._rename_folder_now(folder)
+
+    def _rename_folder_now(self, folder):
+        from meetings import retitle_folder
+        try:
+            new = retitle_folder(folder)
+        except (OSError, ValueError) as error:
+            log(f"Meeting: could not rename the folder {folder.name} ({type(error).__name__})")
+            self._settings_status("The meeting was renamed, but not its folder. A file in it may be open.",
+                                  "#FF9F0A")
+            return folder
+        if new != folder:
+            log(f"Meeting: folder renamed to {new.name}")
+            current = self._meeting
+            if current and current.folder == folder:
+                current.folder = new  # The chip's Open goes to the right place
+            if self._settings_win:
+                self._settings_win.meeting_moved(folder, new)
+        return new
+
+    def _rename_waiting_folders(self):
+        for folder in list(self._folder_renames):
+            if not self.meeting_in_use(folder):
+                self._folder_renames.discard(folder)
+                if folder.exists():
+                    self._rename_folder_now(folder)
 
     def set_meeting_my_name(self, name):
         """Remember the name given to Me, for the meetings that follow (#44)."""
