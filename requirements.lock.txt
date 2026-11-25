@@ -38,6 +38,8 @@ pyreadline3==3.5.6
 pystray==0.19.5
 pytest==9.1.1
 PyYAML==6.0.3
+sherpa-onnx==2.0.3
+sherpa-onnx-core==2.0.3
 six==1.17.0
 sounddevice==0.5.6
 sympy==1.14.0
