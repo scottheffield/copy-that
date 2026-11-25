@@ -15,7 +15,7 @@ import customtkinter as ctk
 from pathlib import Path
 
 from dictation_engine import (
-    AppState, CLEANUP_REGISTRY, DictationApp, MODEL_REGISTRY, MODEL_DIR,
+    AppState, CLEANUP_REGISTRY, DEFAULT_CONFIG, DictationApp, MODEL_REGISTRY, MODEL_DIR,
     load_config, save_config, validate_config, validate_settings, log, create_model,
     is_cleanup_downloaded, is_model_downloaded, launch_device,
 )
@@ -31,6 +31,7 @@ class GUIApp:
 
     _meeting = None  # The current or last MeetingSession
     _retranscribing = frozenset()  # Replaced by a set in __init__; folders being re-transcribed
+    _moving_meetings = False  # True while meetings move to a newly chosen folder
     _recovery_started = False
 
     def __init__(self, config: dict):
@@ -502,16 +503,33 @@ class GUIApp:
         if self._meeting and not self._meeting.finished.is_set():
             self._meeting_notice("Still finishing the last meeting")
             return
-        from meetings import MeetingSession, write_meta
-        try:
-            session = MeetingSession(
-                self._config["meetings_dir"], lambda: self._engine.speech_model, lambda: self._engine.active,
+        from meetings import MeetingSession, same_folder, write_meta
+        if self._moving_meetings:
+            self._meeting_notice("Still moving meetings to the new folder")
+            return
+
+        def create(root):
+            return MeetingSession(
+                root, lambda: self._engine.speech_model, lambda: self._engine.active,
                 mic_device=self._meeting_mic(), language=self._config.get("language", "en"), log=log,
                 on_done=lambda folder, ok: self._events.put(("action", lambda: self._meeting_done(folder, ok))))
+
+        root, fallback = self._config["meetings_dir"], DEFAULT_CONFIG["meetings_dir"]
+        try:
+            session = create(root)
         except OSError as error:
             log(f"Meeting: could not create the meeting folder ({type(error).__name__})")
-            self._meeting_notice("Couldn't create the meetings folder")
-            return
+            session = None
+            if not same_folder(root, fallback):
+                try:
+                    session = create(fallback)  # E.g. an unplugged drive; keep the setting for when it returns
+                    log("Meeting: saving to the default meetings folder instead")
+                    self._meeting_notice("Meetings folder unavailable. Saving to CopyThat Meetings")
+                except OSError:
+                    session = None
+            if session is None:
+                self._meeting_notice("Couldn't create the meetings folder")
+                return
         try:
             session.start()
         except Exception as error:
@@ -596,6 +614,42 @@ class GUIApp:
         if current and current.folder == folder and not current.finished.is_set():
             return True
         return folder in self._retranscribing
+
+    def meetings_busy(self):
+        """True while any meeting is recording, transcribing, or moving, so the folder can't change."""
+        current = self._meeting
+        return bool((current and not current.finished.is_set()) or self._retranscribing or self._moving_meetings)
+
+    def set_meetings_dir(self, folder, move, on_done):
+        """Save folder as the meetings folder. With move, existing meetings follow it in the
+        background; on_done(moved, failed) then runs on the UI thread."""
+        import threading
+        from meetings import move_meetings
+        old = self._config["meetings_dir"]
+        self._config["meetings_dir"] = str(Path(folder))
+        if self._settings_win:  # It keeps its own copy; Apply would otherwise put the old folder back
+            self._settings_win._config["meetings_dir"] = self._config["meetings_dir"]
+        self._save_quietly()
+        log("Meeting: meetings folder changed" + (", moving meetings" if move else ""))
+        if not move:
+            self._events.put(("action", lambda: on_done(0, 0)))
+            return
+        self._moving_meetings = True
+
+        def run():
+            try:
+                moved, failed = move_meetings(old, folder, skip=self.meeting_in_use)
+            except OSError as error:
+                log(f"Meeting: could not move meetings ({type(error).__name__})")
+                moved, failed = 0, -1
+            log(f"Meeting: moved {moved} meeting(s), {max(failed, 0)} left behind")
+
+            def finish():
+                self._moving_meetings = False
+                on_done(moved, failed)
+            self._events.put(("action", finish))
+
+        threading.Thread(target=run, name="meeting-move", daemon=True).start()
 
     def retranscribe_meeting(self, folder):
         """Transcribe a meeting again from its WAV files, giving way to dictation as usual."""

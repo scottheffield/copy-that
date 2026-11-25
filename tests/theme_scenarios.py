@@ -318,3 +318,42 @@ def test_meetings_page_empty_state(root, tmp_path):
     window.show("Meetings")
     assert any(t.startswith("No meetings yet") for t in page_texts(window._pages["Meetings"]))
     window._win.destroy()
+
+
+def test_meetings_page_changes_the_folder_and_moves_meetings(root, tmp_path, monkeypatch):
+    from tkinter import filedialog
+    import ui.dialogs
+    old, new = tmp_path / "old", tmp_path / "new"
+    make_meeting(old, "2026-11-24 1300", "2026-11-24T13:00:00", "Design review")
+
+    class Provider(FakeMeetings):
+        busy = False
+        calls = []
+
+        def meetings_busy(self):
+            return self.busy
+
+        def set_meetings_dir(self, folder, move, on_done):
+            self.calls.append((folder, move))
+            window._config["meetings_dir"] = folder
+            on_done(1 if move else 0, 0)
+
+    provider = Provider()
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(old)}, [], meetings=provider)
+    window.show("Meetings")
+    page = window._meetings_page
+    monkeypatch.setattr(filedialog, "askdirectory", lambda **kw: str(new))
+    choices = []
+    monkeypatch.setattr(ui.dialogs, "confirm", lambda *a, on_cancel=None: choices.append((a, on_cancel)))
+
+    provider.busy = True
+    page._change_root()
+    assert not provider.calls and window._status_label.cget("text").startswith("Wait until")
+    provider.busy = False
+    page._change_root()
+    (title, message), on_cancel = choices[-1][0][1:3], choices[-1][1]
+    assert title == "Move your meetings?" and message.startswith("1 meeting saved in")
+    choices[-1][0][5]()  # Move
+    assert provider.calls == [(str(new), True)]
+    assert any(str(new) in t for t in page_texts(window._pages["Meetings"]))
+    window._win.destroy()

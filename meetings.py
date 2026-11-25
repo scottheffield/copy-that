@@ -873,3 +873,37 @@ def trash_folder(folder):
                          fFlags=FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI)
     result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
     return result == 0 and not op.fAnyOperationsAborted and not folder.exists()
+
+
+def same_folder(a, b):
+    """True when a and b name the same folder, ignoring case and trailing slashes."""
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return str(a).rstrip("\/").lower() == str(b).rstrip("\/").lower()
+
+
+def move_meetings(source, dest, skip=lambda folder: False):
+    """Move every meeting folder from source into dest, keeping its name, or adding " (2)"
+    when dest already has one. skip(folder) leaves a folder in use where it is.
+    Returns (moved, failed) counts."""
+    import shutil
+    source, dest = Path(source), Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    moved = failed = 0
+    if not source.is_dir() or same_folder(source, dest):
+        return moved, failed
+    for meta_path in sorted(source.glob("*/meta.json")):
+        folder = meta_path.parent
+        if skip(folder):
+            failed += 1
+            continue
+        target, n = dest / folder.name, 2
+        while target.exists():
+            target, n = dest / f"{folder.name} ({n})", n + 1
+        try:
+            shutil.move(str(folder), str(target))
+            moved += 1
+        except OSError:
+            failed += 1
+    return moved, failed

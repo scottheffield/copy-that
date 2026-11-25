@@ -380,3 +380,20 @@ def test_trash_folder_moves_a_meeting_to_the_recycle_bin(tmp_path):
     (folder / "meta.json").write_text("{}", encoding="utf-8")
     assert trash_folder(folder)
     assert not folder.exists()
+
+
+def test_move_meetings_keeps_names_and_skips_folders_in_use(tmp_path):
+    from meetings import move_meetings, same_folder
+    old, new = tmp_path / "old", tmp_path / "new"
+    for name in ("2026-11-24 1300", "2026-11-24 1400", "2026-11-24 1500"):
+        (old / name).mkdir(parents=True)
+        (old / name / "meta.json").write_text("{}", encoding="utf-8")
+    (old / "notes").mkdir()  # Not a meeting: stays put
+    (new / "2026-11-24 1300").mkdir(parents=True)  # Name already taken in the new folder
+    busy = old / "2026-11-24 1500"
+    assert move_meetings(old, new, skip=lambda folder: folder == busy) == (2, 1)
+    assert (new / "2026-11-24 1300 (2)" / "meta.json").exists()
+    assert (new / "2026-11-24 1400" / "meta.json").exists()
+    assert (busy / "meta.json").exists() and (old / "notes").exists()
+    assert move_meetings(new, new) == (0, 0)
+    assert same_folder(str(new) + "\\", new)

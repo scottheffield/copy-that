@@ -103,14 +103,16 @@ class MeetingsPage:
         self._fill_results()
         footer = ctk.CTkFrame(page, fg_color="transparent")
         footer.pack(fill="x", padx=20, pady=(16, 16))
-        note = ctk.CTkLabel(footer, text=f"Meetings are saved on this PC in {self._meetings_dir()}. "
-                            "Change the folder in Settings.", text_color=theme.MUTED, justify="left",
-                            anchor="w", font=ctk.CTkFont(size=12), wraplength=460)
+        note = ctk.CTkLabel(footer, text=f"Meetings are saved on this PC in {self._meetings_dir()}.",
+                            text_color=theme.MUTED, justify="left", anchor="w",
+                            font=ctk.CTkFont(size=12), wraplength=460)
         note.pack(fill="x")
         _wrap(note, footer, 0)
         actions = ctk.CTkFrame(footer, fg_color="transparent")
         actions.pack(fill="x", pady=(8, 0))
         self._button(actions, "Open meetings folder", self._open_root)
+        if self._provider and hasattr(self._provider, "set_meetings_dir"):
+            self._button(actions, "Change folder…", self._change_root)
 
     def _open_root(self):
         folder = Path(self._meetings_dir())
@@ -119,6 +121,52 @@ class MeetingsPage:
         except OSError:
             pass
         self._open(folder)
+
+    def _change_root(self):
+        """Pick a new meetings folder, and offer to move the meetings already saved."""
+        from tkinter import filedialog
+        from ui.dialogs import confirm
+        if self._provider.meetings_busy():
+            self._status("Wait until the meeting finishes recording or transcribing, then change the folder.",
+                         "#FF9F0A")
+            return
+        old = self._meetings_dir()
+        chosen = filedialog.askdirectory(parent=self._page.winfo_toplevel(), title="Choose the meetings folder",
+                                         initialdir=old if Path(old).is_dir() else str(Path.home()))
+        if not chosen or meetings.same_folder(chosen, old):
+            return
+        chosen = str(Path(chosen))
+        count = len(meetings.list_meetings(old))
+
+        def apply(move):
+            if self._provider.meetings_busy():  # A meeting started while the dialog was open
+                self._status("Wait until the meeting finishes, then change the folder.", "#FF9F0A")
+                return
+            if move:
+                self._status(f"Moving {count} meeting{'s' * (count != 1)}…")
+            self._provider.set_meetings_dir(chosen, move, done)
+
+        def done(moved, failed):
+            if failed < 0:
+                self._status("Couldn't move the meetings. They are still in the old folder.", "#FF453A")
+            elif failed:
+                self._status(f"Moved {moved}. {failed} couldn't move and stayed in {old}.", "#FF9F0A")
+            elif moved:
+                self._status(f"Moved {moved} meeting{'s' * (moved != 1)} to {chosen}.", "#30D158")
+            else:
+                self._status(f"New meetings will be saved in {chosen}.", "#30D158")
+            if self._page.winfo_exists():
+                self.render()
+
+        if not count:
+            apply(False)
+            return
+        plural = "s" if count != 1 else ""
+        confirm(self._root, "Move your meetings?",
+                f"{count} meeting{plural} saved in {old}. Move {'them' if count != 1 else 'it'} to the new "
+                f"folder, or leave {'them' if count != 1 else 'it'} where {'they are' if count != 1 else 'it is'}? "
+                "Meetings left behind don't show here unless you switch back.",
+                "Move", "Leave", lambda: apply(True), on_cancel=lambda: apply(False))
 
     def _on_search(self, _event=None):
         if self._search_job:
