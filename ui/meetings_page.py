@@ -8,7 +8,7 @@ import customtkinter as ctk
 import meetings
 from ui import theme
 
-PREVIEW_LINES = 14
+LINES_PER_BATCH = 25  # Transcript lines drawn per idle moment, so a long meeting opens without freezing
 SEARCH_DELAY_MS = 250
 STATUS_TEXT = {
     "recording": "Recording",
@@ -593,21 +593,36 @@ class MeetingsPage:
             ctk.CTkLabel(page, text="No speech was recognized.", text_color=theme.MUTED).pack(anchor="w", padx=20)
             return
         preview = ctk.CTkFrame(page, fg_color="transparent")
-        preview.pack(fill="x", padx=20)
+        preview.pack(fill="x", padx=20, pady=(0, 16))
         preview.grid_columnconfigure(2, weight=1)
-        for row, (stamp, speaker, said) in enumerate(lines[:PREVIEW_LINES]):
-            ctk.CTkLabel(preview, text=stamp, text_color=theme.MUTED, font=ctk.CTkFont(size=13),
+        fonts = (ctk.CTkFont(size=13), ctk.CTkFont(size=14, weight="bold"), ctk.CTkFont(size=15))
+        self._draw_lines(preview, lines, 0, fonts)
+
+    @staticmethod
+    def _body_wrap(preview):
+        """Wrap width for a new line: the frame's, once it has been laid out."""
+        width = preview.winfo_width()
+        return 360 if width <= 1 else max(100, width / preview._get_widget_scaling() - 150)
+
+    def _draw_lines(self, preview, lines, start, fonts):
+        """The whole transcript, a batch at a time; stops if the page was redrawn meanwhile."""
+        if not preview.winfo_exists():
+            return
+        stamp_font, speaker_font, body_font = fonts
+        end = min(len(lines), start + LINES_PER_BATCH)
+        for row in range(start, end):
+            stamp, speaker, said = lines[row]
+            ctk.CTkLabel(preview, text=stamp, text_color=theme.MUTED, font=stamp_font,
                          anchor="nw").grid(row=row, column=0, sticky="nw", padx=(0, 10), pady=(0, 10))
-            ctk.CTkLabel(preview, text=speaker, anchor="nw", font=ctk.CTkFont(size=14, weight="bold"),
+            ctk.CTkLabel(preview, text=speaker, anchor="nw", font=speaker_font,
                          text_color=theme.ACCENT if speaker == "Me" else theme.MUTED,
                          ).grid(row=row, column=1, sticky="nw", padx=(0, 10), pady=(0, 10))
             body = ctk.CTkLabel(preview, text=said, text_color=theme.TEXT, justify="left", anchor="nw",
-                                font=ctk.CTkFont(size=15), wraplength=360)
+                                font=body_font, wraplength=self._body_wrap(preview))
             body.grid(row=row, column=2, sticky="new", pady=(0, 10))
             _wrap(body, preview, 150)
-        if len(lines) > PREVIEW_LINES:
-            ctk.CTkLabel(page, text="The preview shows the start of the meeting. Open transcript for all of it.",
-                         text_color=theme.MUTED, font=ctk.CTkFont(size=13)).pack(anchor="w", padx=20, pady=(4, 16))
+        if end < len(lines):
+            preview.after(1, lambda: self._draw_lines(preview, lines, end, fonts))
 
     def _rename(self, folder, title, item):
         title = " ".join(title.split())
