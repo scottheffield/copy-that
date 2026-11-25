@@ -209,11 +209,12 @@ def test_speaker_progress_is_reported_while_running(tmp_path):
     folder = make_meeting(tmp_path, [], words("a b", 1.0) + words("c d", 5.0))
     seen = []
     def fake(samples, stopped, report):
+        seen.append(speakers.progress(folder))  # None until the first report, not a stuck 0%
         report(0.5)
         seen.append(speakers.progress(folder))
         return [(0.0, 2.0, 0), (4.5, 6.0, 1)]
     speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
-    assert seen == [0.5] and speakers.progress(folder) is None
+    assert seen == [None, 0.5] and speakers.progress(folder) is None
 
 
 def test_transcribe_progress_counts_both_tracks(tmp_path):

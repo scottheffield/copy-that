@@ -86,12 +86,9 @@ def diarize(samples, stopped=lambda: False, report=lambda fraction: None):
 
 
 def _diarize_child(path, conn):
-    """Runs in its own process: diarize one WAV, sending progress, then the segments."""
-    try:
-        from windows_io import set_process_priority
-        set_process_priority("below_normal")  # Dictation and the rest of the PC come first
-    except Exception:
-        pass
+    """Runs in its own process: diarize one WAV, sending progress, then the segments.
+    Normal priority: below normal ran it at under half a core on a busy PC (likely on
+    efficiency cores), 80 minutes taking over 10 minutes. Two threads leave room for dictation."""
     try:
         segments = diarize(read_track(path), report=lambda fraction: conn.send(("progress", fraction)))
         conn.send(("done", segments))
@@ -102,7 +99,7 @@ def _diarize_child(path, conn):
 
 
 def diarize_apart(path, stopped=lambda: False, report=lambda fraction: None):
-    """diarize() on a WAV file in a separate low-priority process.
+    """diarize() on a WAV file in a separate process.
 
     sherpa-onnx holds the GIL while it works, which froze the app's window and
     hotkey for minutes on a long meeting. In its own process it can't, and
@@ -198,7 +195,9 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
         return "done"
     _set_status(folder, "running")
     started = time.monotonic()
-    _progress[folder] = 0.0
+    # No fraction until separation reports one: its first stage (finding speech turns) reports
+    # nothing and takes minutes on a long meeting, so 0% would look stuck. The page shows
+    # "Finding speakers…" with a moving bar meanwhile.
     try:
         segments = diarize_fn(folder / f"{track}.wav", stopped, lambda f: _progress.__setitem__(folder, f))
         ids = assign([w.time for w in words], segments)
