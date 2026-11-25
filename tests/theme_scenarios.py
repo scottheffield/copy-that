@@ -551,11 +551,11 @@ def test_speaker_menu_adds_moves_and_renames(root, tmp_path):
 
     # Type a new name: adds the speaker and moves just this line.
     entry = menu_for("yeah")
-    entry.insert(0, "Paul")
+    entry.insert(0, "Alex")
     entry._entry.event_generate("<Return>")
     root.update()
     lines = meetings.transcript_lines(meetings.read_transcript(folder))
-    assert [(s, t) for _, s, t in lines] == [("Me", "hi there"), ("Others", "hello"), ("Paul", "yeah")]
+    assert [(s, t) for _, s, t in lines] == [("Me", "hi there"), ("Others", "hello"), ("Alex", "yeah")]
     # The pencil on the current speaker renames it on every line.
     entry = menu_for("hi there")
     pencil = next(w for w in all_widgets(page._menu) if isinstance(w, ctk.CTkButton) and w.cget("text") == "\u270e")

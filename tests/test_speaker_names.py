@@ -28,22 +28,22 @@ def said(folder):
 def test_naming_a_speaker_renames_every_line_and_the_transcript(tmp_path):
     labels = {"others": ["Speaker 1", "Speaker 2", "Speaker 2", "Speaker 2", "Speaker 2", "Speaker 1"]}
     folder = make(tmp_path, labels)
-    assert meetings.name_speaker(folder, "Speaker 2", "  Paul  ") == "Speaker 2"
-    assert said(folder) == [("Me", "hi there"), ("Speaker 1", "hello"), ("Paul", "so the plan is"),
+    assert meetings.name_speaker(folder, "Speaker 2", "  Alex  ") == "Speaker 2"
+    assert said(folder) == [("Me", "hi there"), ("Speaker 1", "hello"), ("Alex", "so the plan is"),
                             ("Me", "sounds good"), ("Speaker 1", "yeah")]
     meetings.name_speaker(folder, "Me", "Scott")
     assert [s for s, _ in said(folder)][0] == "Scott"
     assert not meetings.read_speakers(folder)["edited"]
-    assert meetings.has_speaker_edits(folder)  # Paul's name would be lost on Re-transcribe
+    assert meetings.has_speaker_edits(folder)  # Alex's name would be lost on Re-transcribe
 
 
 def test_a_name_another_speaker_has_merges_them(tmp_path):
     labels = {"others": ["Speaker 1", "Speaker 2", "Speaker 2", "Speaker 2", "Speaker 2", "Speaker 1"]}
     folder = make(tmp_path, labels)
-    meetings.name_speaker(folder, "Speaker 1", "Paul")
-    assert meetings.speaker_named(folder, "paul", besides="Speaker 2") == "Speaker 1"
-    assert meetings.name_speaker(folder, "Speaker 2", "Paul") == "Speaker 1"
-    assert [s for s, _ in said(folder)] == ["Me", "Paul", "Paul", "Me", "Paul"]
+    meetings.name_speaker(folder, "Speaker 1", "Alex")
+    assert meetings.speaker_named(folder, "alex", besides="Speaker 2") == "Speaker 1"
+    assert meetings.name_speaker(folder, "Speaker 2", "Alex") == "Speaker 1"
+    assert [s for s, _ in said(folder)] == ["Me", "Alex", "Alex", "Me", "Alex"]
     assert "Speaker 2" not in meetings.read_transcript(folder)
 
 
@@ -51,9 +51,9 @@ def test_moving_one_line(tmp_path):
     folder = make(tmp_path)
     rows = meetings.speaker_rows(folder)
     yeah = next(r for r in rows if r["text"] == "yeah")
-    paul = meetings.add_speaker(folder, "Paul")
-    meetings.move_line(folder, yeah["track"], yeah["first"], yeah["last"], paul)
-    assert said(folder)[-1] == ("Paul", "yeah")
+    alex = meetings.add_speaker(folder, "Alex")
+    meetings.move_line(folder, yeah["track"], yeah["first"], yeah["last"], alex)
+    assert said(folder)[-1] == ("Alex", "yeah")
     assert ("Others", "hello") in said(folder)
     assert meetings.read_speakers(folder)["edited"]
 
@@ -74,10 +74,10 @@ def test_add_speaker_takes_the_next_free_number(tmp_path):
 
 def test_rows_carry_names_and_word_ranges(tmp_path):
     folder = make(tmp_path)
-    meetings.name_speaker(folder, "Others", "Paul")
+    meetings.name_speaker(folder, "Others", "Alex")
     rows = meetings.speaker_rows(folder)
-    assert [(r["label"], r["name"]) for r in rows][:2] == [("Me", "Me"), ("Others", "Paul")]
-    assert meetings.speakers_in(rows) == [("Me", "Me"), ("Others", "Paul")]
+    assert [(r["label"], r["name"]) for r in rows][:2] == [("Me", "Me"), ("Others", "Alex")]
+    assert meetings.speakers_in(rows) == [("Me", "Me"), ("Others", "Alex")]
     plan = next(r for r in rows if r["text"] == "so the plan is")
     assert (plan["track"], plan["first"], plan["last"]) == ("others", 1, 4)
 
@@ -90,7 +90,7 @@ def test_old_meetings_without_word_times_have_no_rows(tmp_path):
 
 def test_a_new_transcript_keeps_only_my_name(tmp_path):
     folder = make(tmp_path, {"others": ["Speaker 1"] * 6})
-    meetings.name_speaker(folder, "Speaker 1", "Paul")
+    meetings.name_speaker(folder, "Speaker 1", "Alex")
     meetings.name_speaker(folder, "Me", "Scott")
     meetings.reset_speakers(folder)
     assert meetings.read_speakers(folder) == {"labels": {}, "names": {"Me": "Scott"}, "edited": False}
@@ -112,10 +112,10 @@ def test_in_person_meeting_names_the_mic_speaker(tmp_path):
 
 def test_title_rename_keeps_speaker_names(tmp_path):
     folder = make(tmp_path)
-    meetings.name_speaker(folder, "Others", "Paul")
+    meetings.name_speaker(folder, "Others", "Alex")
     meetings.rename_meeting(folder, "Catch-up")
     assert meetings.read_transcript(folder).startswith("# Catch-up\n")
-    assert ("Paul", "hello") in said(folder)
+    assert ("Alex", "hello") in said(folder)
 
 
 def test_app_remembers_my_name_and_puts_it_on_new_meetings(tmp_path, monkeypatch):
