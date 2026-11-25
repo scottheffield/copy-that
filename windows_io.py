@@ -135,6 +135,24 @@ def set_process_priority(level):
     return bool(kernel.SetPriorityClass(kernel.GetCurrentProcess(), PRIORITY_CLASSES[level]))
 
 
+def keep_full_speed():
+    """Opt this process out of Windows power throttling (EcoQoS), which otherwise moves
+    work with no window in front to efficiency cores. False if Windows refused."""
+    class State(ctypes.Structure):
+        _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG),
+                    ("StateMask", wintypes.ULONG)]
+    PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1
+    ProcessPowerThrottling = 4
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.SetProcessInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    kernel.SetProcessInformation.restype = wintypes.BOOL
+    # Control the execution-speed policy, with its state off: never throttle.
+    state = State(1, PROCESS_POWER_THROTTLING_EXECUTION_SPEED, 0)
+    return bool(kernel.SetProcessInformation(kernel.GetCurrentProcess(), ProcessPowerThrottling,
+                                             ctypes.byref(state), ctypes.sizeof(state)))
+
+
 def clipboard_sequence():
     return _apis()[0].GetClipboardSequenceNumber()
 

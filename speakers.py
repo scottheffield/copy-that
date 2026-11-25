@@ -88,7 +88,14 @@ def diarize(samples, stopped=lambda: False, report=lambda fraction: None):
 def _diarize_child(path, conn):
     """Runs in its own process: diarize one WAV, sending progress, then the segments.
     Normal priority: below normal ran it at under half a core on a busy PC (likely on
-    efficiency cores), 80 minutes taking over 10 minutes. Two threads leave room for dictation."""
+    efficiency cores), 80 minutes taking over 10 minutes. Two threads leave room for dictation.
+    It has no window, so Windows also throttles it unless told not to; it ran faster
+    whenever CopyThat's window was in front."""
+    try:
+        from windows_io import keep_full_speed
+        keep_full_speed()
+    except Exception:
+        pass
     try:
         segments = diarize(read_track(path), report=lambda fraction: conn.send(("progress", fraction)))
         conn.send(("done", segments))
