@@ -38,6 +38,16 @@ The app lives in the system tray. The floating pill is hidden while idle and sho
 
 Up to three unfinished takes can overlap. Processing and pasting remain ordered. Each pasted take ends with a space so the next take starts a new word. Existing trailing whitespace is preserved and auto-submit omits the added space. History keeps the transcript without the added separator. Recordings stop at 5 minutes by default, with a low double pluck 15 seconds before the limit. Audio cues: a pluck once the microphone is actually delivering audio, a lower pluck on release, and a rising two-note pluck when text is pasted. Silence detection rejects takes without enough detected speech before recognition.
 
+## Meetings (early)
+
+Right-click the tray icon and choose **Record meeting** to record a call, and **Stop meeting recording** when it ends. CopyThat records two tracks: your microphone, labeled "Me", and whatever the laptop plays, labeled "Others". Nothing joins the call, and nothing is uploaded.
+
+Each meeting gets a folder under `CopyThat Meetings` in your user folder, holding `mic.wav`, `others.wav`, `transcript.md`, and `meta.json`. **Open meetings folder** in the tray menu goes there. To save meetings somewhere else, use **Change folder…** on the Meetings page, which offers to move the meetings already saved. If the chosen folder is unavailable, for example on an unplugged drive, new meetings go to `CopyThat Meetings` until it returns. Most of the meeting is transcribed during the call, so the transcript is written a few seconds after Stop. Dictation keeps working during a meeting and always goes first. If CopyThat quits or crashes mid-meeting, the audio is kept and the transcript is written the next time it starts.
+
+When the laptop plays nothing for the whole recording, as in an in-person meeting, everyone is on the microphone track and the transcript labels them "Speaker". The output track records the Windows default speaker, so set your meeting app's speaker to Default.
+
+Recording other people may require their consent, and the rules vary by place. Following them is your responsibility. Nothing on the call tells other people they are being recorded.
+
 ## Settings and recovery
 
 Right-click the tray icon and choose **Settings**:

@@ -10,7 +10,11 @@ class TrayManager:
 
     def __init__(self, on_toggle, on_quit, on_settings=None, on_history=None, on_open=None,
                  device="GPU", model="parakeet", hotkey="ctrl+win",
-                 on_startup=None, startup_enabled=None):
+                 on_startup=None, startup_enabled=None,
+                 on_meeting=None, meeting_recording=None, on_meetings_folder=None):
+        self._on_meeting = on_meeting
+        self._meeting_recording = meeting_recording or (lambda: False)
+        self._on_meetings_folder = on_meetings_folder
         self._on_toggle = on_toggle
         self._on_quit = on_quit
         self._on_settings = on_settings
@@ -35,18 +39,24 @@ class TrayManager:
                 self._on_toggle_click,
                 enabled=lambda _: self._state in ("ready", "recording", "processing"),
             ),
-            pystray.Menu.SEPARATOR,
         ]
+        if self._on_meeting:
+            items.append(pystray.MenuItem(
+                lambda _: "Stop meeting recording" if self._meeting_recording() else "Record meeting",
+                lambda: self._on_meeting()))
+        if self._on_meetings_folder:
+            items.append(pystray.MenuItem("Open meetings folder", lambda: self._on_meetings_folder()))
+        items.append(pystray.Menu.SEPARATOR)
 
         if self._on_history:
-            items.append(pystray.MenuItem("History", lambda: self._on_history()))
+            items.append(pystray.MenuItem("Dictation history", lambda: self._on_history()))
 
         if self._on_settings:
             items.append(pystray.MenuItem("Settings", lambda: self._on_settings(),
                                           default=self._on_open is None))
         if self._on_open:
             # Left-click opens the main window at the last page used; it never starts a
-            # recording. Hidden from the menu, which already has History and Settings.
+            # recording. Hidden from the menu, which already has Dictation history and Settings.
             items.append(pystray.MenuItem("Open CopyThat", lambda: self._on_open(),
                                           default=True, visible=False))
         if self._on_startup:

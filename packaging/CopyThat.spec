@@ -12,7 +12,7 @@ datas, binaries, hiddenimports = [], [], ["pystray._win32", "_sounddevice_data"]
 commit_file = root / ".runtime/package-build" / COMMIT_FILE
 if commit_file.exists():
     datas.append((str(commit_file), "."))
-for package in ("openvino", "openvino_genai", "openvino_tokenizers", "onnxruntime", "customtkinter", "_sounddevice_data", "winrt"):
+for package in ("openvino", "openvino_genai", "openvino_tokenizers", "onnxruntime", "customtkinter", "_sounddevice_data", "winrt", "pyaudiowpatch"):
     data, binary, hidden = collect_all(package)
     datas += data
     binaries += binary

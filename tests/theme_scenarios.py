@@ -82,12 +82,12 @@ def test_theme_keeps_active_pill_geometry_and_state(root):
 def test_history_both_themes_and_empty_state(root):
     for entries in ([], [{"text": "Sample transcript " * 80, "raw": "raw", "duration": 3}]):
         window = SettingsWindow(root, dict(DEFAULT_CONFIG), [], history=lambda e=entries: e)
-        window.show("History")
+        window.show("Dictation")
         for mode in ("light", "dark"):
             ctk.set_appearance_mode(mode)
             window.refresh_theme()
             root.update_idletasks()
-            assert window.is_open and window.page == "History"
+            assert window.is_open and window.page == "Dictation"
         window._win.destroy()
 
 
@@ -99,27 +99,27 @@ def test_one_window_apply_only_on_settings_pages(root):
     root.update_idletasks()
     assert window._win.title() == "CopyThat"
     assert window.page == "General" and window._apply_btn.winfo_manager() == "pack"
-    window.show("History")
+    window.show("Dictation")
     root.update_idletasks()
-    assert window.page == "History" and window._apply_btn.winfo_manager() == ""
-    labels = [w.cget("text") for w in window._pages["History"].winfo_children()[-1].winfo_children()
+    assert window.page == "Dictation" and window._apply_btn.winfo_manager() == ""
+    labels = [w.cget("text") for w in window._pages["Dictation"].winfo_children()[-1].winfo_children()
               if isinstance(w, ctk.CTkLabel)]
     assert "First take" in labels
     entries.append({"text": "Second take", "raw": "second take", "duration": 1})
     window._select_page("General")
-    window._select_page("History")
-    newest = window._pages["History"].winfo_children()[3]
+    window._select_page("Dictation")
+    newest = window._pages["Dictation"].winfo_children()[3]
     assert "Second take" in [w.cget("text") for w in newest.winfo_children() if isinstance(w, ctk.CTkLabel)]
     window._select_page("Dictionary")
     assert window._apply_btn.winfo_manager() == "pack"
-    assert pages == ["General", "History", "General", "History", "Dictionary"]
+    assert pages == ["General", "Dictation", "General", "Dictation", "Dictionary"]
     window._win.destroy()
 
 
 def test_window_reopens_at_last_page(root):
     window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "History"}, [])
     window.show()
-    assert window.page == "History"
+    assert window.page == "Dictation"  # 0.3.x saved the old name
     window._win.destroy()
     window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "Gone"}, [])
     window.show()
@@ -213,3 +213,147 @@ def test_welcome_downloads_on_one_click(root):
     welcome._poll()
     assert welcome._primary.cget("text") == "Close"
     welcome._win.destroy()
+
+
+def make_meeting(root_dir, name, started, title="Untitled", status="done", lines=()):
+    import json
+    folder = root_dir / name
+    folder.mkdir(parents=True)
+    (folder / "meta.json").write_text(json.dumps({"title": title, "started": started,
+        "duration_seconds": 458.0, "status": status}), encoding="utf-8")
+    (folder / "mic.wav").write_bytes(b"")
+    if status == "done":
+        body = "\n\n".join(f"**[00:{i:02d}] {who}:** {said}" for i, (who, said) in enumerate(lines))
+        (folder / "transcript.md").write_text(f"# {title}\n\n{started[:16]} · 07:38\n\n{body}\n",
+                                              encoding="utf-8")
+    return folder
+
+
+class FakeMeetings:
+    def __init__(self):
+        self.retranscribed = []
+
+    def retranscribe_meeting(self, folder):
+        self.retranscribed.append(folder)
+
+    def meeting_in_use(self, folder):
+        return False
+
+
+def page_texts(widget):
+    out = []
+    for child in widget.winfo_children():
+        if isinstance(child, ctk.CTkLabel):
+            out.append(child.cget("text"))
+        out.extend(page_texts(child))
+    return out
+
+
+def test_meetings_page_lists_searches_and_renames(root, tmp_path):
+    review = make_meeting(tmp_path, "2026-11-24 1300", "2026-11-24T13:00:00", "Design review",
+                          lines=[("Me", "Let's start with onboarding."), ("Others", "The second screen feels crowded.")])
+    make_meeting(tmp_path, "2026-11-21 0815", "2026-11-21T08:15:00", status="failed")
+    provider = FakeMeetings()
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=provider)
+    window.show("Meetings")
+    root.update_idletasks()
+    page = window._meetings_page
+    texts = page_texts(window._pages["Meetings"])
+    assert "Design review" in texts and "Untitled · 8:15 AM" in texts and "Transcription failed" in texts
+    assert window._apply_btn.winfo_manager() == ""
+    # Search reaches transcript text, not just titles.
+    page._search.insert(0, "crowded")
+    page._apply_search()
+    texts = page_texts(page._results)
+    assert "Design review" in texts and "Untitled · 8:15 AM" not in texts
+    page._search.delete(0, "end")
+    page._search.insert(0, "nothing like this")
+    page._apply_search()
+    assert any(t.startswith("No meetings match") for t in page_texts(page._results))
+    # Detail view: preview, rename, re-transcribe.
+    page.show_detail(review)
+    texts = page_texts(window._pages["Meetings"])
+    assert "Let's start with onboarding." in texts and "Others" in texts
+    page._rename(review, "  Onboarding   review ", {"title": "Design review"})
+    from meetings import read_meta, read_transcript
+    assert read_meta(review)["title"] == "Onboarding review"
+    assert read_transcript(review).startswith("# Onboarding review\n")
+    page._retranscribe(review)
+    assert provider.retranscribed == [review]
+    # An untitled meeting shows an empty, outlined title field; typing then leaving saves it.
+    untitled = tmp_path / "2026-11-21 0815"
+    page.show_detail(untitled)
+    assert page._title_field.get() == "" and page._title_field.cget("placeholder_text") == "Add a title"
+    page._title_field.insert(0, "Standup")
+    page._query = ""  # Clear the earlier search
+    page.show_list()
+    assert read_meta(untitled)["title"] == "Standup"
+    # Rename from the list without opening the meeting.
+    def widgets(parent, kind):
+        found = []
+        for child in parent.winfo_children():
+            if isinstance(child, kind):
+                found.append(child)
+            found.extend(widgets(child, kind))
+        return found
+    renames = [b for b in widgets(page._results, ctk.CTkButton) if b.cget("text") == "Rename"]
+    assert len(renames) == 2
+    standup = next(b for b in renames if "Standup" in page_texts(b.master))
+    standup.invoke()
+    field = widgets(standup.master, ctk.CTkEntry)[0]
+    assert field.get() == "Standup"
+    field.delete(0, "end")
+    field.insert(0, "Daily standup")
+    page.save_pending()
+    assert read_meta(untitled)["title"] == "Daily standup"
+    page.show_list()
+    for mode in ("dark", "light"):
+        ctk.set_appearance_mode(mode)
+        root.update_idletasks()
+    window._win.destroy()
+
+
+def test_meetings_page_empty_state(root, tmp_path):
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path / "none")}, [])
+    window.show("Meetings")
+    assert any(t.startswith("No meetings yet") for t in page_texts(window._pages["Meetings"]))
+    window._win.destroy()
+
+
+def test_meetings_page_changes_the_folder_and_moves_meetings(root, tmp_path, monkeypatch):
+    from tkinter import filedialog
+    import ui.dialogs
+    old, new = tmp_path / "old", tmp_path / "new"
+    make_meeting(old, "2026-11-24 1300", "2026-11-24T13:00:00", "Design review")
+
+    class Provider(FakeMeetings):
+        busy = False
+        calls = []
+
+        def meetings_busy(self):
+            return self.busy
+
+        def set_meetings_dir(self, folder, move, on_done):
+            self.calls.append((folder, move))
+            window._config["meetings_dir"] = folder
+            on_done(1 if move else 0, 0)
+
+    provider = Provider()
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(old)}, [], meetings=provider)
+    window.show("Meetings")
+    page = window._meetings_page
+    monkeypatch.setattr(filedialog, "askdirectory", lambda **kw: str(new))
+    choices = []
+    monkeypatch.setattr(ui.dialogs, "confirm", lambda *a, on_cancel=None: choices.append((a, on_cancel)))
+
+    provider.busy = True
+    page._change_root()
+    assert not provider.calls and window._status_label.cget("text").startswith("Wait until")
+    provider.busy = False
+    page._change_root()
+    (title, message), on_cancel = choices[-1][0][1:3], choices[-1][1]
+    assert title == "Move your meetings?" and message.startswith("1 meeting saved in")
+    choices[-1][0][5]()  # Move
+    assert provider.calls == [(str(new), True)]
+    assert any(str(new) in t for t in page_texts(window._pages["Meetings"]))
+    window._win.destroy()

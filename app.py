@@ -15,7 +15,7 @@ import customtkinter as ctk
 from pathlib import Path
 
 from dictation_engine import (
-    AppState, CLEANUP_REGISTRY, DictationApp, MODEL_REGISTRY, MODEL_DIR,
+    AppState, CLEANUP_REGISTRY, DEFAULT_CONFIG, DictationApp, MODEL_REGISTRY, MODEL_DIR,
     load_config, save_config, validate_config, validate_settings, log, create_model,
     is_cleanup_downloaded, is_model_downloaded, launch_device,
 )
@@ -28,6 +28,11 @@ from ui.settings import SettingsWindow
 
 class GUIApp:
     """Main GUI application wiring all components."""
+
+    _meeting = None  # The current or last MeetingSession
+    _retranscribing = frozenset()  # Replaced by a set in __init__; folders being re-transcribed
+    _moving_meetings = False  # True while meetings move to a newly chosen folder
+    _recovery_started = False
 
     def __init__(self, config: dict):
         self._config = config
@@ -63,6 +68,15 @@ class GUIApp:
         self._overlay.set_balloon_font_size(config.get("balloon_font_size", 16))
         self._overlay.set_bubble_position(config.get("bubble_position", "cursor"))
 
+        # Meeting chip: its own window, so the pill stays free for dictation mid-meeting.
+        from ui.meeting_chip import MeetingChip
+        position = config.get("meeting_chip_position")
+        self._chip = MeetingChip(
+            self._root, on_stop=self._toggle_meeting, on_open=self._open_last_transcript,
+            on_consent_seen=self._consent_seen, on_moved=self._chip_moved,
+            position=tuple(position) if position else None)
+        self._chip_poll_id = None
+
         # Tray
         import startup
         self._tray = TrayManager(
@@ -76,10 +90,14 @@ class GUIApp:
             hotkey=config["hotkey"],
             on_startup=(lambda: self._events.put(("action", self._toggle_startup))) if getattr(sys, "frozen", False) else None,
             startup_enabled=startup.enabled,
+            on_meeting=lambda: self._events.put(("action", self._toggle_meeting)),
+            meeting_recording=self._meeting_recording,
+            on_meetings_folder=lambda: self._events.put(("action", self._open_meetings_folder)),
         )
 
         # Lazy-created windows
         self._settings_win: SettingsWindow | None = None
+        self._retranscribing = set()
         self._audio_poll_id = None
         from ui.theme import ThemeController
         self._theme_controller = ThemeController(self._root, config.get("theme", "system"), self._refresh_theme)
@@ -87,6 +105,7 @@ class GUIApp:
 
     def _refresh_theme(self, mode):
         self._overlay.set_theme(mode)
+        self._chip.set_theme(mode)
         for window in (self._settings_win, self._welcome):
             if window:
                 window.refresh_theme()
@@ -117,6 +136,7 @@ class GUIApp:
         self._settings_set_apply(False)
         self._engine = DictationApp(self._config)
         self._engine.add_callback(self._on_state_change)
+        self._engine.meeting_active = self._meeting_recording()
         self._start_engine()
 
     # -- Models ------------------------------------------------------------
@@ -310,6 +330,9 @@ class GUIApp:
             self._settings_set_apply(True)
             if self._offer_delete:
                 self._offer_deletes()
+            if not self._recovery_started:
+                self._recovery_started = True
+                self._finish_interrupted_meetings()
 
         elif state == AppState.RECORDING:
             self._tray.update_state(state_name, f"CopyThat {VERSION} — Recording...")
@@ -360,7 +383,7 @@ class GUIApp:
             self._root.after_cancel(self._audio_poll_id)
             self._audio_poll_id = None
 
-    # -- Main window (History and Settings) ---------------------------------
+    # -- Main window (Dictation, Meetings and Settings) ----------------------
 
     def _show_main(self, page=None):
         """Open the main window at page, or at the last page used."""
@@ -370,7 +393,7 @@ class GUIApp:
         devices = DictationApp.list_input_devices()
         self._settings_win = SettingsWindow(
             self._root, self._config, devices, on_apply=self._on_settings_apply, models=self,
-            history=lambda: self._engine.history, on_page_change=self._on_page_change,
+            history=lambda: self._engine.history, on_page_change=self._on_page_change, meetings=self,
         )
         self._root.after(0, lambda: self._settings_win.show(page))
 
@@ -378,7 +401,7 @@ class GUIApp:
         self._show_main("General")
 
     def _show_history(self):
-        self._show_main("History")
+        self._show_main("Dictation")
 
     def _on_page_change(self, page):
         if self._config.get("main_window_page") == page:
@@ -397,6 +420,10 @@ class GUIApp:
             return
         if self._engine.active or self._engine.state == AppState.LOADING:
             self._settings_status("Finish pending takes before applying settings.", "#FF9F0A")
+            return
+        meeting = getattr(self, "_meeting", None)
+        if meeting and not meeting.finished.is_set():
+            self._settings_status("Stop the meeting recording and let its transcript finish first.", "#FF9F0A")
             return
         model_changed = new_config["model_size"] != self._config["model_size"]
         if model_changed and not is_model_downloaded(new_config["model_size"]):
@@ -450,6 +477,238 @@ class GUIApp:
         if self._settings_win and self._settings_win.is_open:
             self._settings_win.set_apply_enabled(enabled)
 
+    # -- Meetings ----------------------------------------------------------
+
+    def _meeting_recording(self):
+        return bool(self._meeting and self._meeting.meta["status"] == "recording")
+
+    def _meeting_notice(self, text):
+        # The pill belongs to dictation while a take is in progress.
+        if not self._engine.active:
+            self._overlay.show_notice(text, "Meeting", seconds=3.0)
+
+    def _meeting_mic(self):
+        """The microphone dictation uses, so both record the same device."""
+        key = self._config.get("input_device_key")
+        if not key:
+            return None
+        from dictation_runtime import find_input_device
+        device = find_input_device(DictationApp.list_input_devices(), key)
+        return device["index"] if device else None
+
+    def _toggle_meeting(self):
+        if self._meeting_recording():
+            self._stop_meeting()
+            return
+        if self._meeting and not self._meeting.finished.is_set():
+            self._meeting_notice("Still finishing the last meeting")
+            return
+        from meetings import MeetingSession, same_folder, write_meta
+        if self._moving_meetings:
+            self._meeting_notice("Still moving meetings to the new folder")
+            return
+
+        def create(root):
+            return MeetingSession(
+                root, lambda: self._engine.speech_model, lambda: self._engine.active,
+                mic_device=self._meeting_mic(), language=self._config.get("language", "en"), log=log,
+                on_done=lambda folder, ok: self._events.put(("action", lambda: self._meeting_done(folder, ok))))
+
+        root, fallback = self._config["meetings_dir"], DEFAULT_CONFIG["meetings_dir"]
+        try:
+            session = create(root)
+        except OSError as error:
+            log(f"Meeting: could not create the meeting folder ({type(error).__name__})")
+            session = None
+            if not same_folder(root, fallback):
+                try:
+                    session = create(fallback)  # E.g. an unplugged drive; keep the setting for when it returns
+                    log("Meeting: saving to the default meetings folder instead")
+                    self._meeting_notice("Meetings folder unavailable. Saving to CopyThat Meetings")
+                except OSError:
+                    session = None
+            if session is None:
+                self._meeting_notice("Couldn't create the meetings folder")
+                return
+        try:
+            session.start()
+        except Exception as error:
+            log(f"Meeting: could not start recording ({type(error).__name__}: {error})")
+            session.meta["status"] = "failed"
+            session._close_tracks()
+            write_meta(session.folder, session.meta)
+            self._meeting_notice("Couldn't start the meeting recording")
+            return
+        self._meeting = session
+        self._engine.meeting_active = True
+        log(f"Meeting: recording started in {session.folder.name}")
+        if self._config.get("beep_on_start", True):
+            from dictation_engine import chime_start
+            chime_start()
+        self._chip.show_recording(consent=not self._config.get("meeting_consent_seen", False))
+        self._poll_chip()
+        self._tray.update_state(self._tray._state)  # Menu text: Stop meeting recording
+        self._refresh_meetings()
+
+    def _poll_chip(self):
+        session = self._meeting
+        if not self._meeting_recording():
+            self._chip_poll_id = None
+            return
+        self._chip.update(session.elapsed, *session.levels(), problem=session.problem,
+                          devices=session.devices())
+        self._chip_poll_id = self._root.after(150, self._poll_chip)
+
+    def _stop_meeting(self):
+        session = self._meeting
+        session.stop()
+        self._engine.meeting_active = False
+        log(f"Meeting: stopped after {session.meta['duration_seconds']:.0f}s; finishing the transcript")
+        if self._config.get("beep_on_start", True):
+            from dictation_engine import chime_stop
+            chime_stop()
+        self._chip.show_finishing(session.meta["duration_seconds"])
+        self._tray.update_state(self._tray._state)
+        self._refresh_meetings()
+
+    def _meeting_done(self, folder, ok):
+        log(f"Meeting: transcript {'saved' if ok else 'not finished'} in {folder.name}")
+        if self._retranscribing:
+            self._retranscribing.discard(Path(folder))
+        self._refresh_meetings()
+        if self._meeting and self._meeting.folder == folder and self._chip.state == "finishing":
+            self._chip.show_ready() if ok else self._chip.show_failed()
+
+    def _open_last_transcript(self):
+        import os
+        if not self._meeting:
+            return
+        target = self._meeting.folder / "transcript.md"
+        try:
+            os.startfile(target if target.exists() else self._meeting.folder)
+        except OSError as error:
+            log(f"Meeting: could not open the transcript ({type(error).__name__})")
+
+    def _consent_seen(self):
+        self._config["meeting_consent_seen"] = True
+        self._save_quietly()
+
+    def _chip_moved(self, position):
+        self._config["meeting_chip_position"] = list(position)
+        self._save_quietly()
+
+    def _save_quietly(self):
+        try:
+            save_config(self._config)
+        except (OSError, ValueError) as error:
+            log(f"Could not save settings ({type(error).__name__})")
+
+    def _refresh_meetings(self):
+        if self._settings_win:
+            self._settings_win.refresh_meetings()
+
+    def meeting_in_use(self, folder):
+        """True while a meeting is being recorded or transcribed into folder."""
+        folder = Path(folder)
+        current = self._meeting
+        if current and current.folder == folder and not current.finished.is_set():
+            return True
+        return folder in self._retranscribing
+
+    def meetings_busy(self):
+        """True while any meeting is recording, transcribing, or moving, so the folder can't change."""
+        current = self._meeting
+        return bool((current and not current.finished.is_set()) or self._retranscribing or self._moving_meetings)
+
+    def set_meetings_dir(self, folder, move, on_done):
+        """Save folder as the meetings folder. With move, existing meetings follow it in the
+        background; on_done(moved, failed) then runs on the UI thread."""
+        import threading
+        from meetings import move_meetings
+        old = self._config["meetings_dir"]
+        self._config["meetings_dir"] = str(Path(folder))
+        if self._settings_win:  # It keeps its own copy; Apply would otherwise put the old folder back
+            self._settings_win._config["meetings_dir"] = self._config["meetings_dir"]
+        self._save_quietly()
+        log("Meeting: meetings folder changed" + (", moving meetings" if move else ""))
+        if not move:
+            self._events.put(("action", lambda: on_done(0, 0)))
+            return
+        self._moving_meetings = True
+
+        def run():
+            try:
+                moved, failed = move_meetings(old, folder, skip=self.meeting_in_use)
+            except OSError as error:
+                log(f"Meeting: could not move meetings ({type(error).__name__})")
+                moved, failed = 0, -1
+            log(f"Meeting: moved {moved} meeting(s), {max(failed, 0)} left behind")
+
+            def finish():
+                self._moving_meetings = False
+                on_done(moved, failed)
+            self._events.put(("action", finish))
+
+        threading.Thread(target=run, name="meeting-move", daemon=True).start()
+
+    def retranscribe_meeting(self, folder):
+        """Transcribe a meeting again from its WAV files, giving way to dictation as usual."""
+        import threading
+        from meetings import read_meta, transcribe_folder, write_meta
+        folder = Path(folder)
+        if self.meeting_in_use(folder):
+            return
+        try:
+            meta = read_meta(folder)
+            meta["status"] = "transcribing"
+            write_meta(folder, meta)
+        except (OSError, ValueError) as error:
+            log(f"Meeting: could not re-transcribe {folder.name} ({type(error).__name__})")
+            self._settings_status("Couldn't re-transcribe this meeting.", "#FF453A")
+            return
+        self._retranscribing.add(folder)
+        log(f"Meeting: re-transcribing {folder.name}")
+
+        def run():
+            ok = transcribe_folder(folder, lambda: self._engine.speech_model, lambda: self._engine.active,
+                                   self._config.get("language", "en"), log, lambda: self._closing)
+            self._events.put(("action", lambda: self._meeting_done(folder, ok)))
+
+        threading.Thread(target=run, name="meeting-retranscribe", daemon=True).start()
+
+    def _open_meetings_folder(self):
+        import os
+        folder = Path(self._config["meetings_dir"])
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            os.startfile(folder)
+        except OSError as error:
+            log(f"Meeting: could not open the meetings folder ({type(error).__name__})")
+
+    def _finish_interrupted_meetings(self):
+        """Transcribe meetings that a quit or crash left without a transcript."""
+        import threading
+        from meetings import transcribe_folder, unfinished
+
+        def run():
+            try:
+                folders = unfinished(self._config["meetings_dir"],
+                                     skip=self._meeting.folder if self._meeting else None)
+            except OSError:
+                return
+            for folder in folders:
+                if self._closing:
+                    return
+                current = self._meeting
+                if current and current.folder == folder:
+                    continue  # Started before the model loaded; it is still recording.
+                log(f"Meeting: finishing the transcript for {folder.name}")
+                ok = transcribe_folder(folder, lambda: self._engine.speech_model, lambda: self._engine.active,
+                                       self._config.get("language", "en"), log, lambda: self._closing)
+                self._events.put(("action", lambda f=folder, ok=ok: self._meeting_done(f, ok)))
+
+        threading.Thread(target=run, name="meeting-recovery", daemon=True).start()
+
     # -- Quit --------------------------------------------------------------
 
     def _toggle_startup(self):
@@ -462,6 +721,8 @@ class GUIApp:
 
     def _quit(self):
         self._closing = True
+        if self._meeting:
+            self._meeting.abandon()  # Audio is kept; the next launch writes the transcript.
         self._theme_controller.close()
         self._engine.stop()
         self._tray.stop()

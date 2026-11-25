@@ -1,19 +1,19 @@
-"""The History page of the main window: this session's takes, ready to copy again."""
+"""The Dictation page of the main window: this session's takes, ready to copy again."""
 import customtkinter as ctk
 from ui import theme
 
-DESCRIPTION = "Your recent words, close at hand."
+DESCRIPTION = "Your recent takes, close at hand."
 
 
 def build_history_page(page, root, entries):
     """Fill page (a CTkScrollableFrame) with the newest takes first. Rebuilt on each visit."""
     for child in page.winfo_children():
         child.destroy()
-    ctk.CTkLabel(page, text='History', text_color=theme.TEXT,
+    ctk.CTkLabel(page, text='Dictation', text_color=theme.TEXT,
         font=ctk.CTkFont(size=25, weight='bold')).pack(anchor='w', padx=20, pady=(20, 2))
     ctk.CTkLabel(page, text=DESCRIPTION, text_color=theme.MUTED,
         wraplength=460, justify='left').pack(anchor='w', padx=20, pady=(0, 4))
-    ctk.CTkLabel(page, text='This session only. History clears when the app closes or the engine reloads.',
+    ctk.CTkLabel(page, text='This session only. The list clears when the app closes or the engine reloads.',
         wraplength=460, justify='left', text_color=theme.MUTED,
         font=ctk.CTkFont(size=12)).pack(anchor='w', padx=20, pady=(0, 12))
     if not entries:

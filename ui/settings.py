@@ -1,4 +1,4 @@
-"""The main CopyThat window: History plus settings grouped by task, in shared light and dark colors."""
+"""The main CopyThat window: Dictation and Meetings, plus settings grouped by task, in shared light and dark colors."""
 
 import customtkinter as ctk
 import tkinter as tk
@@ -104,14 +104,15 @@ def _make_wide_dropdown(om, values, on_select):
 
 
 SETTINGS_PAGES = ("General", "Speech", "Dictionary", "Advanced")
-PAGES = ("History",) + SETTINGS_PAGES
+PAGES = ("Dictation", "Meetings") + SETTINGS_PAGES
+RENAMED_PAGES = {"History": "Dictation"}  # Saved by 0.3.x builds
 
 
 class SettingsWindow:
-    """The main window. History sits above the settings pages; Apply shows only on settings pages."""
+    """The main window. Dictation and Meetings sit above the settings pages; Apply shows only on settings pages."""
 
     def __init__(self, root: ctk.CTk, config: dict, input_devices: list[dict],
-                 on_apply=None, models=None, history=None, on_page_change=None):
+                 on_apply=None, models=None, history=None, on_page_change=None, meetings=None):
         """
         Args:
             root: Parent CTk window.
@@ -120,7 +121,8 @@ class SettingsWindow:
             on_apply: Callback(new_config) called when user clicks Apply.
             models: Provides model_state, download_model, cancel_download and
                 remove_model(kind, key). Without it, cards only show what is installed.
-            history: Callable returning this session's takes for the History page.
+            history: Callable returning this session's takes for the Dictation page.
+            meetings: Provides retranscribe_meeting(folder) and meeting_in_use(folder).
             on_page_change: Callback(page_name) so the app can reopen at the last page.
         """
         self._root = root
@@ -129,6 +131,8 @@ class SettingsWindow:
         self._on_apply = on_apply
         self._models = models
         self._history = history or (lambda: [])
+        self._meetings = meetings
+        self._meetings_page = None
         self._on_page_change = on_page_change
         self._page = None
         self._win: ctk.CTkToplevel | None = None
@@ -158,6 +162,7 @@ class SettingsWindow:
 
         self._win = ctk.CTkToplevel(self._root)
         self._win.title("CopyThat")
+        self._win.protocol("WM_DELETE_WINDOW", self._close)
         from ui import screen
         screen.place(self._win, 760, 760, 720, 620)  # Shrinks to fit a short or scaled screen
         self._win.configure(fg_color=_CONTENT_BG)
@@ -219,7 +224,7 @@ class SettingsWindow:
             fg_color=_ACCENT, hover_color=_ACCENT_HOVER, text_color=theme.ON_ACCENT,
         )
         self._close_btn = ctk.CTkButton(
-            btn_frame, text="Close", command=self._win.destroy, width=100,
+            btn_frame, text="Close", command=self._close, width=100,
             fg_color=_BTN_SEC_BG, hover_color=_BTN_SEC_HOVER,
             text_color=_BTN_SEC_TEXT, border_color=_CARD_BORDER, border_width=1,
         )
@@ -233,14 +238,19 @@ class SettingsWindow:
         container = ctk.CTkFrame(body, fg_color=_CONTENT_BG)
         container.pack(side="left", fill="both", expand=True)
         self._pages, self._nav_buttons = {}, {}
-        history_page = ctk.CTkScrollableFrame(container, fg_color=_CONTENT_BG,
-            scrollbar_button_color=_CARD_BORDER, scrollbar_button_hover_color=_INPUT_BORDER)
-        self._pages["History"] = history_page
-        button = ctk.CTkButton(sidebar, text="History", anchor="w", width=116,
-            height=36, fg_color="transparent", hover_color=theme.SELECTED,
-            text_color=theme.TEXT, command=lambda: self._select_page("History"))
-        button.pack(padx=12, pady=(16, 3))
-        self._nav_buttons["History"] = button
+        for name in ("Dictation", "Meetings"):
+            self._pages[name] = ctk.CTkScrollableFrame(container, fg_color=_CONTENT_BG,
+                scrollbar_button_color=_CARD_BORDER, scrollbar_button_hover_color=_INPUT_BORDER)
+            button = ctk.CTkButton(sidebar, text=name, anchor="w", width=116,
+                height=36, fg_color="transparent", hover_color=theme.SELECTED,
+                text_color=theme.TEXT, command=lambda n=name: self._select_page(n))
+            button.pack(padx=12, pady=(16 if name == "Dictation" else 3, 3))
+            self._nav_buttons[name] = button
+        from ui.meetings_page import MeetingsPage
+        self._meetings_page = MeetingsPage(
+            self._pages["Meetings"], self._root,
+            lambda: self._config.get("meetings_dir", str(Path.home() / "CopyThat Meetings")),
+            provider=self._meetings, status=self.update_status)
         ctk.CTkFrame(sidebar, height=1, fg_color=_CARD_BORDER).pack(fill="x", padx=16, pady=6)
         descriptions = {
             "General": "Make yourself heard. Set up your everyday dictation.",
@@ -518,18 +528,23 @@ class SettingsWindow:
         _make_wide_dropdown(self._priority_dropdown, list(self._priority_choices), None)
         _make_wide_dropdown(self._bubble_dropdown, list(self._bubble_choices), None)
 
-        last = self._config.get("main_window_page")
+        last = RENAMED_PAGES.get(self._config.get("main_window_page"), self._config.get("main_window_page"))
         self._select_page(requested or (last if last in PAGES else "General"))
 
     def _select_page(self, name):
+        name = RENAMED_PAGES.get(name, name)
+        if self._meetings_page and self._page == "Meetings":
+            self._meetings_page.save_pending()
         if name not in self._pages:
             name = "General"
         for key, page in self._pages.items():
             page.pack_forget()
             self._nav_buttons[key].configure(fg_color=theme.SELECTED if key == name else "transparent")
-        if name == "History":
+        if name == "Dictation":
             from ui.history import build_history_page
             build_history_page(self._pages[name], self._root, list(self._history()))
+        elif name == "Meetings":
+            self._meetings_page.render()
         if name in SETTINGS_PAGES:
             self._apply_btn.pack(side="right", padx=(8, 0), before=self._close_btn)
         else:
@@ -540,6 +555,22 @@ class SettingsWindow:
             self._config["main_window_page"] = name
             if self._on_page_change:
                 self._on_page_change(name)
+
+    def _close(self):
+        if self._meetings_page:
+            self._meetings_page.save_pending()
+        self._win.destroy()
+
+    def refresh_meetings(self):
+        """Redraw the Meetings page if it is showing, e.g. when a transcript finishes."""
+        if self.is_open and self._page == "Meetings" and self._meetings_page:
+            self._meetings_page.render()
+
+    def show_meeting(self, folder):
+        """Open the Meetings page at one meeting's detail."""
+        self.show("Meetings")
+        if self._meetings_page:
+            self._meetings_page.show_detail(folder)
 
     def refresh_theme(self):
         if self.is_open:
