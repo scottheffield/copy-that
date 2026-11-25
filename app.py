@@ -40,6 +40,7 @@ class GUIApp:
 
     _meeting = None  # The current or last MeetingSession
     _retranscribing = frozenset()  # Replaced by a set in __init__; folders being re-transcribed
+    _full_speed = False            # Opted out of Windows power throttling right now (#14)
     _folder_renames = frozenset()  # Replaced by a set in __init__; folders to retitle once idle (#57)
     _speaker_jobs, _speaker_folder = (), None  # Replaced in __init__; speaker labeling queue
     _speaker_lock = threading.Lock()
@@ -302,8 +303,30 @@ class GUIApp:
                 self._update_ui(*value)
             else:
                 value()
+        self._update_speed()
         if not self._closing:
             self._root.after(30, self._drain_events)
+
+    def _busy_for_speed(self):
+        """True while a dictation take or meeting transcription is running."""
+        current = self._meeting
+        return bool(getattr(self._engine, "active", False) or self._retranscribing
+                    or (current and not current.finished.is_set()))
+
+    def _update_speed(self):
+        """Run at full speed while there is work, even with CopyThat's window behind others:
+        Windows power throttling (EcoQoS) slowed a meeting's transcription about 4x when it
+        wasn't in front. Idle, Windows decides again, which saves battery (#14)."""
+        busy = self._busy_for_speed()
+        if busy == self._full_speed:
+            return
+        self._full_speed = busy
+        try:
+            from windows_io import keep_full_speed
+            if not keep_full_speed(busy):
+                log("Power throttling: Windows refused the change")
+        except Exception as error:
+            log(f"Power throttling: could not change it ({type(error).__name__})")
 
     def _update_ui(self, state: AppState, data: dict):
         """Update tray icon and overlay from the main thread."""
