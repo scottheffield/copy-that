@@ -525,3 +525,32 @@ def test_snippet_shows_why_a_transcript_matched(tmp_path):
     assert snippet(item, "review") is None     # The title already explains the match
     assert snippet(item, "nowhere") is None and snippet(item, "  ") is None
     assert snippet(item, "hello") == ("Me", "", "Hello", " there.")
+
+
+def test_a_rename_during_the_meeting_is_kept(tmp_path):
+    """Renaming on the Meetings page while recording: the session's own copy of meta
+    must not put the old title back when it saves, nor in the transcript heading."""
+    folder = tmp_path / "2026-11-24 2013"
+    folder.mkdir()
+    session_meta = {"title": "Untitled", "started": "2026-11-24T20:13:00", "status": "recording"}
+    meetings.write_meta(folder, session_meta)
+    meetings.rename_meeting(folder, "Panel discussion")
+    session_meta["status"] = "transcribing"
+    meetings.save_meta(folder, session_meta)
+    assert meetings.read_meta(folder)["title"] == "Panel discussion"
+    meetings.write_meta(folder, {**session_meta, "title": "Untitled"})
+    meetings.rename_meeting(folder, "Panel discussion")
+    job = meetings.MeetingTranscription.__new__(meetings.MeetingTranscription)
+    job.folder, job._log, job._others_heard = folder, print, True
+
+    class Done:
+        words, track = [TimedWord("hi", 0.0)], None
+
+        def step(self, *args, **kwargs):
+            return True
+    job._tracks = {"mic": Done(), "others": Done()}
+    job._get_model, job._language = (lambda: None), "en"
+    stale = {**session_meta, "title": "Untitled", "duration_seconds": 5}
+    assert job.finish(stale)
+    assert (folder / "transcript.md").read_text(encoding="utf-8").startswith("# Panel discussion")
+    assert stale["title"] == "Panel discussion"

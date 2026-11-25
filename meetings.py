@@ -677,6 +677,21 @@ def read_meta(folder):
     return json.loads((Path(folder) / "meta.json").read_text(encoding="utf-8"))
 
 
+def keep_title(folder, meta):
+    """Take the title from meta.json: the Meetings page may have renamed the meeting
+    since this copy of its meta was read."""
+    try:
+        meta["title"] = read_meta(folder).get("title", meta.get("title"))
+    except (OSError, ValueError):
+        pass
+
+
+def save_meta(folder, meta):
+    """write_meta for a recording or transcription in progress, keeping a rename made meanwhile."""
+    keep_title(folder, meta)
+    write_meta(folder, meta)
+
+
 def write_meta(folder, meta):
     path = Path(folder) / "meta.json"
     tmp = path.with_suffix(".json.tmp")
@@ -762,6 +777,7 @@ class MeetingTranscription:
         heard = self._others_heard
         if heard is None:
             heard = _heard(self._tracks["others"].track)
+        keep_title(self.folder, meta)  # Renamed while recording or transcribing
         text = render_transcript(meta, self._tracks["mic"].words, self._tracks["others"].words, heard)
         (self.folder / "transcript.md").write_text(text, encoding="utf-8")
         return True
@@ -841,7 +857,7 @@ class MeetingSession:
         spans = self.mutes.manual_spans(origin, until or time.monotonic())
         if spans:
             self.meta["muted"] = spans
-            write_meta(self.folder, self.meta)
+            save_meta(self.folder, self.meta)
 
     @property
     def problem(self):
@@ -861,7 +877,7 @@ class MeetingSession:
             raise
         self._t0 = time.monotonic()
         self.meta.update(mic_device=self.mic.name, output_devices=[self.output.name])
-        write_meta(self.folder, self.meta)
+        save_meta(self.folder, self.meta)
         self._transcription = MeetingTranscription(self.folder, self.mic_track, self.others_track,
                                                    self._get_model, self._busy, self._language, self._log)
         self._live_thread = threading.Thread(target=self._transcription.live, name="meeting-live", daemon=True)
@@ -881,7 +897,7 @@ class MeetingSession:
         self._stop_capture()
         self._transcription.stop_live()
         self.meta["status"] = "transcribing"
-        write_meta(self.folder, self.meta)
+        save_meta(self.folder, self.meta)
         heard = self.output.level.heard_fraction >= HEARD_FRACTION
         self._transcription._others_heard = heard
         threading.Thread(target=self._finish, name="meeting-finish", daemon=True).start()
@@ -900,7 +916,7 @@ class MeetingSession:
         if not ok and self.meta["status"] != "failed":
             self.meta["status"] = "interrupted"  # Quit first; the next launch finishes it.
         self._close_tracks()
-        write_meta(self.folder, self.meta)
+        save_meta(self.folder, self.meta)
         self.finished.set()
         self._on_done(self.folder, ok)
 
@@ -917,7 +933,7 @@ class MeetingSession:
                 self._transcription.stop_live()
             self.meta["status"] = "interrupted"
             self._close_tracks()
-            write_meta(self.folder, self.meta)
+            save_meta(self.folder, self.meta)
 
 
 def transcribe_folder(folder, get_model, busy, language="en", log=print, stopped=lambda: False):
@@ -929,7 +945,7 @@ def transcribe_folder(folder, get_model, busy, language="en", log=print, stopped
     try:
         meta["duration_seconds"] = round(max(mic.seconds, others.seconds), 1)
         meta["status"] = "transcribing"
-        write_meta(folder, meta)
+        save_meta(folder, meta)
         job = MeetingTranscription(folder, mic, others, get_model, busy, language, log)
         ok = job.finish(meta, stopped)
         meta["status"] = "done" if ok else "interrupted"
@@ -940,7 +956,7 @@ def transcribe_folder(folder, get_model, busy, language="en", log=print, stopped
     finally:
         mic.close()
         others.close()
-    write_meta(folder, meta)
+    save_meta(folder, meta)
     return ok
 
 
