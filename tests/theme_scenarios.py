@@ -5,6 +5,7 @@ import customtkinter as ctk
 import pytest
 
 from dictation_engine import DEFAULT_CONFIG, validate_config
+from ui import theme
 from ui.theme import ThemeController
 from ui.settings import SettingsWindow
 from ui.overlay import OverlayWindow
@@ -343,6 +344,7 @@ def test_retranscribing_meeting_shows_percent_and_explains_the_old_transcript(ro
     copy = [b for b in all_widgets(window._pages["Meetings"])
             if isinstance(b, ctk.CTkButton) and b.cget("text") == "Copy as Markdown"]
     assert copy and copy[0].cget("state") == "disabled"
+    assert copy[0].cget("fg_color") != theme.ACCENT  # Outlined while disabled, not washed-out blue
     window._meetings_page._stop_progress()
     window._win.destroy()
 

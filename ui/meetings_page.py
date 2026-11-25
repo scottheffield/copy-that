@@ -182,9 +182,12 @@ class MeetingsPage:
         return bool(self._provider and self._provider.meeting_in_use(item["folder"]))
 
     def _button(self, parent, text, command, primary=False, state="normal"):
+        # A disabled button keeps its fill and only dims the text, so a disabled primary
+        # button would be washed-out blue. Draw it outlined, like the other disabled buttons.
         options = dict(fg_color=theme.ACCENT, hover_color=theme.ACCENT_HOVER, text_color=theme.ON_ACCENT) \
-            if primary else dict(fg_color=theme.SURFACE, hover_color=theme.SELECTED, text_color=theme.TEXT,
-                                 border_color=theme.BORDER, border_width=1)
+            if primary and state != "disabled" else dict(
+                fg_color=theme.SURFACE, hover_color=theme.SELECTED, text_color=theme.TEXT,
+                border_color=theme.BORDER, border_width=1)
         button = ctk.CTkButton(parent, text=text, command=command, height=30, width=0, state=state, **options)
         button.pack(side="left", padx=(0, 8), pady=(0, 8))
         return button
