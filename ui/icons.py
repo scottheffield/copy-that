@@ -12,10 +12,11 @@ def render_app_icon(size, color=APP_ICON_COLOR):
     ss = 600  # Draw large so the check stays crisp at 16px
     img = Image.new("RGBA", (ss, ss), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    # A wide oval and a long tail to the corner, so it still reads as a bubble at 16px.
-    draw.ellipse([40, 20, 590, 420], fill=color)
-    draw.polygon([(110, 330), (0, 600), (300, 400)], fill=color)
-    draw.line([(190, 225), (290, 315), (460, 140)], fill=CHECK_COLOR, width=78, joint="curve")
+    # A wide oval with a short tail dropping from its lower left. The short tail leaves
+    # room for a bigger bubble and check, which matters most at 16px in the tray.
+    draw.ellipse([10, 30, 590, 470], fill=color)
+    draw.polygon([(140, 400), (140, 585), (320, 450)], fill=color)
+    draw.line([(175, 250), (285, 350), (470, 160)], fill=CHECK_COLOR, width=86, joint="curve")
     return img.resize((size, size), Image.LANCZOS)
 
 
