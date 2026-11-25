@@ -887,13 +887,15 @@ class GUIApp:
             log(f"Meeting: could not open the meetings folder ({type(error).__name__})")
 
     def _note_interrupted_meetings(self):
-        """Mark meetings a quit or crash left unfinished, and say so once (#66).
+        """Mark meetings a quit or crash left unfinished, and say so once (#66). Also give
+        every folder its meeting's title again: one titled before folders followed titles,
+        one Windows wouldn't rename before a quit, or one renamed by hand.
 
         Nothing is restarted: work that starts by itself at launch, with no word
         of why the PC is busy, is a mystery. The meeting says it didn't finish,
         and Re-transcribe finishes it."""
         import threading
-        from meetings import speakers_unfinished, stop_speakers, unfinished
+        from meetings import misnamed_folders, speakers_unfinished, stop_speakers, unfinished
 
         def run():
             try:
@@ -903,7 +905,14 @@ class GUIApp:
                     stop_speakers(folder)
                     folders.append(folder)
             except OSError:
-                return
+                folders = []
+            try:
+                stale = misnamed_folders(self._config["meetings_dir"])
+            except OSError:
+                stale = []
+            if stale:  # The title is the meeting's name: its folder follows it, quietly (#57)
+                self._events.put(("action", lambda: (self._folder_renames.update(stale),
+                                                     self._refresh_meetings())))
             if not folders:
                 return
             for folder in folders:

@@ -302,6 +302,7 @@ def test_launch_restarts_nothing_and_says_what_did_not_finish(tmp_path):
     gui = app_module.GUIApp.__new__(app_module.GUIApp)
     gui._config = {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}
     gui._events, gui._closing, gui._meeting = queue.Queue(), False, None
+    gui._folder_renames = set()
     gui._speaker_jobs, gui._speaker_folder, gui._speaker_lock = [], None, threading.Lock()
     notes, queued = [], []
     gui._notify = notes.append

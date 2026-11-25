@@ -93,3 +93,23 @@ def test_a_refused_rename_keeps_the_folder_and_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(meetings, "retitle_folder", refuse)
     assert gui.rename_meeting_folder(folder) == folder and folder.exists()
     assert gui.statuses and "not its folder" in gui.statuses[0]
+
+
+def test_launch_gives_every_folder_its_title_again(tmp_path):
+    old = make(tmp_path, title="Panel")                        # Titled before folders followed titles
+    by_hand = make(tmp_path, "My notes", title="Standup")       # Renamed in File Explorer
+    taken = make(tmp_path, "2026-11-24 2013 Standup (2)", title="Standup")  # Name was taken: fine as is
+    untitled = make(tmp_path, "2026-11-24 2013 (3)")
+    assert sorted(f.name for f in meetings.misnamed_folders(tmp_path)) == ["2026-11-24 2013", "My notes"]
+    gui = bare_app(tmp_path)
+    gui._note_interrupted_meetings()
+    for _ in range(100):
+        if not gui._events.empty():
+            break
+        threading.Event().wait(0.02)
+    while not gui._events.empty():
+        gui._events.get()[1]()
+    names = sorted(p.name for p in tmp_path.iterdir())
+    assert names == ["2026-11-24 2013 (3)", "2026-11-24 2013 Panel", "2026-11-24 2013 Standup",
+                     "2026-11-24 2013 Standup (2)"]
+    assert not old.exists() and not by_hand.exists() and taken.exists() and untitled.exists()
