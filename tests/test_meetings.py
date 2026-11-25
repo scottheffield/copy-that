@@ -507,3 +507,21 @@ def test_mic_track_ignores_late_blocks_that_catch_up(tmp_path):
     mic._flush(final=True)
     assert mic.filled == [] and abs(track.seconds - 6.0) < 1e-6
     track.close()
+
+
+def test_snippet_shows_why_a_transcript_matched(tmp_path):
+    from meetings import snippet
+    folder = tmp_path / "a"
+    folder.mkdir()
+    (folder / "transcript.md").write_text(
+        "# Review\n\n**[00:04] Me:** Hello there.\n\n**[00:09] Others:** "
+        "We decided after a long and winding discussion to ship it Thursday if QA passes the final round of checks on the release build.\n",
+        encoding="utf-8")
+    item = {"folder": folder, "title": "Review", "started": datetime(2026, 11, 24, 9)}
+    speaker, before, hit, after = snippet(item, "thursday")
+    assert speaker == "Others" and hit == "Thursday"
+    assert before.startswith("\u2026") and before.endswith("ship it ")
+    assert after.startswith(" if QA") and after.endswith("\u2026")
+    assert snippet(item, "review") is None     # The title already explains the match
+    assert snippet(item, "nowhere") is None and snippet(item, "  ") is None
+    assert snippet(item, "hello") == ("Me", "", "Hello", " there.")
