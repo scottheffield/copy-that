@@ -185,6 +185,7 @@ class MicCapture:
     """The microphone dictation uses, through sounddevice at 16 kHz."""
 
     SILENT_SECONDS = 5  # Exact zeros this long means the mic delivers nothing
+    REPORT_SECONDS = 60  # How often the log compares recorded audio with the clock
 
     def __init__(self, track, device=None, log=print):
         self.track, self.level, self._log = track, Level(), log
@@ -196,6 +197,8 @@ class MicCapture:
         self._stop = threading.Event()
         self._writer = threading.Thread(target=self._drain, name="meeting-mic", daemon=True)
         self.name = None
+        self._started = None
+        self._flags = {}  # PortAudio status flags seen, e.g. input overflow, with counts
 
     def start(self):
         import sounddevice as sd
@@ -205,11 +208,15 @@ class MicCapture:
         def callback(indata, frames, time_info, status):
             with self._lock:
                 self._blocks.append(indata[:, 0].copy())
+                if status:
+                    key = str(status)
+                    self._flags[key] = self._flags.get(key, 0) + 1
 
         self._stream = sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=1600,
                                       callback=callback, device=device,
                                       extra_settings=_wasapi_convert(sd, device))
         self._stream.start()
+        self._started = time.monotonic()
         try:
             if self._device is not None:
                 self.name = sd.query_devices(device)["name"]
@@ -230,9 +237,26 @@ class MicCapture:
         return self._last_sound is not None and time.monotonic() - self._last_sound > self.SILENT_SECONDS
 
     def _drain(self):
+        next_report = time.monotonic() + self.REPORT_SECONDS
         while not self._stop.wait(0.2):
             self._flush()
+            if time.monotonic() >= next_report:
+                next_report += self.REPORT_SECONDS
+                self._report()
         self._flush()
+        self._report()
+
+    def _report(self):
+        """Diagnostic: the mic track has come out up to ~2 s shorter than the meeting.
+        Log how far it is behind the clock, and any status flags, to find when that happens."""
+        if self._started is None:
+            return
+        elapsed = time.monotonic() - self._started
+        with self._lock:
+            flags = dict(self._flags)
+        recorded = self.track.seconds
+        self._log(f"Meeting: mic recorded {recorded:.1f}s of {elapsed:.1f}s "
+                  f"(behind {elapsed - recorded:.2f}s)" + (f", flags {flags}" if flags else ""))
 
     def _flush(self):
         with self._lock:
