@@ -125,7 +125,7 @@ One reverted fix is worth repeating: a check for missed key releases stopped eve
 
 ## Models
 
-Models are not stored in this repository. They download from Hugging Face when you choose them, and each one keeps its own license.
+Models are not stored in this repository. Speech and Polish models download from Hugging Face when you choose them. The two small speaker models that label who spoke in a meeting (about 46 MB) are included in the installer. Each model keeps its own license.
 
 | Model | Used for | Source | License |
 | --- | --- | --- | --- |
@@ -133,6 +133,8 @@ Models are not stored in this repository. They download from Hugging Face when y
 | Whisper base, small, medium | Speech | [OpenVINO](https://huggingface.co/OpenVINO) conversions of OpenAI Whisper | Apache-2.0 |
 | Whisper large v3 turbo | Speech | [FluidInference/whisper-large-v3-turbo-int4-ov-npu](https://huggingface.co/FluidInference/whisper-large-v3-turbo-int4-ov-npu), converted from [openai/whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) | Apache-2.0 (conversion); MIT (OpenAI original) |
 | Qwen3 1.7B, 4B, 8B | Polish | [OpenVINO](https://huggingface.co/OpenVINO) conversions of Qwen3 | Apache-2.0 |
+| pyannote segmentation 3.0 | Meeting speakers | [csukuangfj/sherpa-onnx-pyannote-segmentation-3-0](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0), converted from [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) | MIT |
+| TitaNet small | Meeting speakers | [csukuangfj/speaker-embedding-models](https://huggingface.co/csukuangfj/speaker-embedding-models) (`nemo_en_titanet_small.onnx`), converted from NVIDIA NeMo [TitaNet small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) | CC-BY-4.0 |
 
 ## Build from source
 
@@ -153,6 +155,7 @@ Setup installs `requirements.lock.txt` and downloads complete model snapshots at
 | `.venv/` | Project Python environment |
 | `.runtime/config.json` | Launcher configuration |
 | `.runtime/models/` | Downloaded model snapshots and manifests |
+| `.runtime/speaker-models/` | Meeting speaker models, fetched by setup and the installer build (`python speaker_models.py`) |
 | `.runtime/ov-cache/` | Speech compilation cache |
 | `.runtime/models/ov-cache/` | Cleanup compilation cache |
 | `.runtime/dictation.log` | Timing and error logs without transcript text, capped at 10 MB across two files |

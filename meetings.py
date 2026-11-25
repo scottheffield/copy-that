@@ -7,6 +7,7 @@ A meeting is one folder under the meetings folder:
         mic.wav          what the microphone heard ("Me")
         others.wav       what the laptop played ("Others")
         transcript.md    timestamped, labeled transcript
+        words.json       timed words per track, for labeling speakers later
         meta.json        title, start, duration, status
 
 Both tracks are 16 kHz mono WAV, the rate the speech model uses. The wave
@@ -618,11 +619,21 @@ class TrackTranscriber:
     def words(self):
         return list(self._transcript.words) if self._transcript else []
 
+    def done_and_total(self):
+        """(samples recognized, samples in the track), for progress."""
+        total = len(self.track)
+        if self._transcript is None:
+            return 0, total
+        return (total if self._transcript.complete else min(total, self._transcript.position)), total
 
-def utterances(words, speaker, gap=UTTERANCE_GAP):
-    """Group a track's words into lines, a new line after a pause."""
+
+def utterances(words, speaker, gap=UTTERANCE_GAP, labels=None):
+    """Group a track's words into lines, a new line after a pause or a change of speaker.
+    labels: one speaker name per word, replacing speaker."""
     lines = []
-    for word in words:
+    for i, word in enumerate(words):
+        if labels is not None:
+            speaker = labels[i]
         if lines and lines[-1]["speaker"] == speaker and word.time - lines[-1]["end"] <= gap:
             lines[-1]["words"].append(word.text)
             lines[-1]["end"] = word.time
@@ -637,13 +648,16 @@ def clock(seconds):
     return f"{hours}:{rest // 60:02d}:{rest % 60:02d}" if hours else f"{rest // 60:02d}:{rest % 60:02d}"
 
 
-def render_transcript(meta, mic_words, others_words, others_heard):
+def render_transcript(meta, mic_words, others_words, others_heard, labels=None):
     """Markdown transcript. Without sound on the output track (an in-person
     meeting), everyone is on the mic, so it isn't labeled as you. A long manual
-    mute gets a marker line, so the gap doesn't look like lost audio."""
+    mute gets a marker line, so the gap doesn't look like lost audio.
+    labels: {"mic" or "others": one speaker name per word}, from speaker separation."""
     me = "Me" if others_heard else "Speaker"
+    labels = labels or {}
     mutes = [{"start": a, "muted": b - a} for a, b in meta.get("muted", []) if b - a >= MUTE_MARKER_SECONDS]
-    lines = sorted(utterances(mic_words, me) + utterances(others_words, "Others") + mutes,
+    lines = sorted(utterances(mic_words, me, labels=labels.get("mic"))
+                   + utterances(others_words, "Others", labels=labels.get("others")) + mutes,
                    key=lambda line: line["start"])
     started = datetime.fromisoformat(meta["started"])
     out = [f"# {meta['title']}", "",
@@ -693,9 +707,28 @@ def save_meta(folder, meta):
 
 
 def write_meta(folder, meta):
-    path = Path(folder) / "meta.json"
+    _write_json(Path(folder) / "meta.json", meta)
+
+
+def write_words(folder, mic_words, others_words, others_heard):
+    """Save the timed words, so speakers can be labeled without recognizing again."""
+    _write_json(Path(folder) / "words.json", {
+        "others_heard": bool(others_heard),
+        "mic": [[round(w.time, 3), w.text] for w in mic_words],
+        "others": [[round(w.time, 3), w.text] for w in others_words]})
+
+
+def read_words(folder):
+    """(mic words, others words, others heard) from words.json; OSError or ValueError if unreadable."""
+    data = json.loads((Path(folder) / "words.json").read_text(encoding="utf-8"))
+    return ([TimedWord(text, time) for time, text in data["mic"]],
+            [TimedWord(text, time) for time, text in data["others"]],
+            bool(data["others_heard"]))
+
+
+def _write_json(path, data):
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     for attempt in range(5):
         try:
             tmp.replace(path)
@@ -733,7 +766,35 @@ def unfinished(root, skip=None):
     return found
 
 
+def speakers_unfinished(root):
+    """Finished meetings whose speaker labels are still to do (a quit or crash stopped them)."""
+    found = []
+    root = Path(root)
+    if not root.is_dir():
+        return found
+    for meta_path in sorted(root.glob("*/meta.json")):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        speakers = meta.get("speakers")
+        if meta.get("status") == "done" and isinstance(speakers, dict) and speakers.get("status") in ("pending", "running"):
+            found.append(meta_path.parent)
+    return found
+
+
 # -- Orchestration ------------------------------------------------------------
+
+_finishing = {}  # folder -> MeetingTranscription writing its final transcript
+_finishing_lock = threading.Lock()
+
+
+def transcribe_progress(folder):
+    """Fraction of a meeting's audio recognized while its transcript is being finished, else None."""
+    with _finishing_lock:
+        job = _finishing.get(Path(folder))
+    return job.progress() if job else None
+
 
 class MeetingTranscription:
     """Transcribe a meeting's two tracks and write transcript.md.
@@ -763,8 +824,24 @@ class MeetingTranscription:
     def stop_live(self):
         self._stop_live.set()
 
+    def progress(self):
+        done = total = 0
+        for transcriber in self._tracks.values():
+            d, t = transcriber.done_and_total()
+            done, total = done + d, total + t
+        return done / total if total else 0.0
+
     def finish(self, meta, stopped=lambda: False):
         """Final windows of both tracks, waiting for dictation if needed; writes the transcript."""
+        with _finishing_lock:
+            _finishing[self.folder] = self
+        try:
+            return self._finish(meta, stopped)
+        finally:
+            with _finishing_lock:
+                _finishing.pop(self.folder, None)
+
+    def _finish(self, meta, stopped):
         pending = dict(self._tracks)
         while pending and not stopped():
             for name in list(pending):
@@ -778,7 +855,14 @@ class MeetingTranscription:
         if heard is None:
             heard = _heard(self._tracks["others"].track)
         keep_title(self.folder, meta)  # Renamed while recording or transcribing
-        text = render_transcript(meta, self._tracks["mic"].words, self._tracks["others"].words, heard)
+        mic_words, others_words = self._tracks["mic"].words, self._tracks["others"].words
+        text = render_transcript(meta, mic_words, others_words, heard)
+        try:
+            write_words(self.folder, mic_words, others_words, heard)
+            meta["speakers"] = {"status": "pending"}
+        except OSError as error:
+            self._log(f"Meeting: could not save word times ({type(error).__name__})")
+            meta["speakers"] = {"status": "failed"}
         (self.folder / "transcript.md").write_text(text, encoding="utf-8")
         return True
 

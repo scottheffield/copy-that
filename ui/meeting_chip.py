@@ -55,6 +55,7 @@ class MeetingChip:
         self._on_consent_seen, self._on_moved = on_consent_seen, on_moved
         self._right, self._top = (position or (None, None))
         self.state = "hidden"   # hidden, recording, finishing, ready, failed
+        self._progress = None   # Finishing: percent of the transcript done
         self._consent = False
         self._elapsed = 0.0
         self._waves = (deque(maxlen=self.BARS), deque(maxlen=self.BARS))  # Me, Others
@@ -132,8 +133,14 @@ class MeetingChip:
     def _place(self, w, h):
         if self._right is None:
             self._right, self._top = self._default_corner()
+        geometry = f"{w}x{h}+{int(self._right - w)}+{int(self._top)}"
+        if geometry == getattr(self, "_geometry", None):
+            return
+        self._geometry = geometry
         self._canvas.configure(width=w, height=h)
-        self._win.geometry(f"{w}x{h}+{int(self._right - w)}+{int(self._top)}")
+        self._win.geometry(geometry)
+        # Paint the resized window now; left for later, the uncovered part can show black.
+        self._win.update_idletasks()
 
     # -- Public state API -----------------------------------------------------
 
@@ -163,8 +170,16 @@ class MeetingChip:
     def show_finishing(self, duration):
         self._cancel_hide()
         self.state, self._elapsed, self._consent = "finishing", duration, False
+        self._progress = None
         self._draw()
         self._win.deiconify()
+
+    def set_progress(self, fraction):
+        """Finishing... 42%: how much of the transcript is done (None shows the meeting's length)."""
+        value = None if fraction is None else int(fraction * 100)
+        if self.state == "finishing" and value != self._progress:
+            self._progress = value
+            self._draw()
 
     def show_ready(self):
         self.state = "ready"
@@ -259,8 +274,10 @@ class MeetingChip:
             x = self.TEXT_X + self._measure(label, label_font) + 12
             extra = []
             if self.state == "finishing":
-                extra.append(("muted", clock(self._elapsed), x))
-                x += self._measure(clock(self._elapsed), small) + 12
+                shown = clock(self._elapsed) if self._progress is None else f"{self._progress}%"
+                extra.append(("muted", shown, x))
+                # Room for "100%" whatever the number, so the chip keeps one width while it counts up.
+                x += max(self._measure(shown, small), self._measure("100%", small)) + 12
             if self.state == "ready":
                 open_w = self._measure("Open", label_font) + 20
                 extra.append(("open", "Open", x, open_w))

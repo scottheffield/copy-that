@@ -10,6 +10,8 @@ Usage:
 import sys
 import argparse
 import queue
+import threading
+import time
 import customtkinter as ctk
 
 from pathlib import Path
@@ -31,6 +33,8 @@ class GUIApp:
 
     _meeting = None  # The current or last MeetingSession
     _retranscribing = frozenset()  # Replaced by a set in __init__; folders being re-transcribed
+    _speaker_jobs, _speaker_folder = (), None  # Replaced in __init__; speaker labeling queue
+    _speaker_lock = threading.Lock()
     _moving_meetings = False  # True while meetings move to a newly chosen folder
     _recovery_started = False
 
@@ -100,6 +104,9 @@ class GUIApp:
         # Lazy-created windows
         self._settings_win: SettingsWindow | None = None
         self._retranscribing = set()
+        self._speaker_jobs = []          # Meeting folders waiting for speaker labels, oldest first
+        self._speaker_folder = None      # The folder being labeled now
+        self._speaker_lock = threading.Lock()
         self._audio_poll_id = None
         from ui.theme import ThemeController
         self._theme_controller = ThemeController(self._root, config.get("theme", "system"), self._refresh_theme)
@@ -588,13 +595,25 @@ class GUIApp:
             from dictation_engine import chime_stop
             chime_stop()
         self._chip.show_finishing(session.meta["duration_seconds"])
+        self._poll_finishing()
         self._tray.update_state(self._tray._state)
         self._refresh_meetings()
+
+    def _poll_finishing(self):
+        """The chip's Finishing shows how much of the transcript is done."""
+        from meetings import transcribe_progress
+        session = self._meeting
+        if not session or self._chip.state != "finishing":
+            return
+        self._chip.set_progress(transcribe_progress(session.folder))
+        self._root.after(500, self._poll_finishing)
 
     def _meeting_done(self, folder, ok):
         log(f"Meeting: transcript {'saved' if ok else 'not finished'} in {folder.name}")
         if self._retranscribing:
             self._retranscribing.discard(Path(folder))
+        if ok:
+            self._find_speakers_later(folder)
         self._refresh_meetings()
         if self._meeting and self._meeting.folder == folder and self._chip.state == "finishing":
             self._chip.show_ready() if ok else self._chip.show_failed()
@@ -632,7 +651,65 @@ class GUIApp:
         current = self._meeting
         if current and current.folder == folder and not current.finished.is_set():
             return True
-        return folder in self._retranscribing
+        return folder in self._retranscribing or self.finding_speakers(folder)
+
+    def meeting_progress(self, folder):
+        """(stage, fraction) while a meeting's transcript is being finished or its speakers
+        found: ("transcribing", 0.4), ("speakers", 0.6), ("speakers waiting", None); else None."""
+        from meetings import transcribe_progress
+        from speakers import progress
+        folder = Path(folder)
+        fraction = transcribe_progress(folder)
+        if fraction is not None:
+            return "transcribing", fraction
+        if self.finding_speakers(folder):
+            fraction = progress(folder)
+            return ("speakers", fraction) if fraction is not None else ("speakers waiting", None)
+        return None
+
+    def finding_speakers(self, folder):
+        """True while speakers are being labeled in folder, or it is waiting its turn."""
+        folder = Path(folder)
+        with self._speaker_lock:
+            return folder == self._speaker_folder or folder in self._speaker_jobs
+
+    def _find_speakers_later(self, folder):
+        """Queue speaker labeling; one meeting at a time, in the background."""
+        folder = Path(folder)
+        with self._speaker_lock:
+            if folder == self._speaker_folder or folder in self._speaker_jobs:
+                return
+            self._speaker_jobs.append(folder)
+            if self._speaker_folder is not None:
+                return  # The worker picks it up next
+            self._speaker_folder = self._speaker_jobs.pop(0)
+        threading.Thread(target=self._speaker_worker, name="meeting-speakers", daemon=True).start()
+
+    def _speaker_worker(self):
+        from meetings import read_meta, write_meta
+        from speakers import find_speakers
+        while True:
+            with self._speaker_lock:
+                folder = self._speaker_folder
+            try:
+                if not self._config.get("meeting_speakers", True):
+                    meta = read_meta(folder)
+                    meta["speakers"] = {"status": "skipped", "reason": "off"}
+                    write_meta(folder, meta)
+                else:
+                    while self._engine.active and not self._closing:
+                        time.sleep(0.5)  # Dictation first; the take gets the CPU
+                    if not self._closing:
+                        self._events.put(("action", self._refresh_meetings))
+                        find_speakers(folder, log, lambda: self._closing)
+            except Exception as error:
+                log(f"Meeting: finding speakers failed ({type(error).__name__})")
+            with self._speaker_lock:
+                self._speaker_folder = self._speaker_jobs.pop(0) if self._speaker_jobs and not self._closing else None
+                done = self._speaker_folder is None
+            self._events.put(("action", self._refresh_meetings))
+            if done:
+                return
 
     def meeting_status(self):
         """(state, elapsed seconds) for the Meetings page's Record button:
@@ -720,7 +797,7 @@ class GUIApp:
     def _finish_interrupted_meetings(self):
         """Transcribe meetings that a quit or crash left without a transcript."""
         import threading
-        from meetings import transcribe_folder, unfinished
+        from meetings import speakers_unfinished, transcribe_folder, unfinished
 
         def run():
             try:
@@ -738,6 +815,14 @@ class GUIApp:
                 ok = transcribe_folder(folder, lambda: self._engine.speech_model, lambda: self._engine.active,
                                        self._config.get("language", "en"), log, lambda: self._closing)
                 self._events.put(("action", lambda f=folder, ok=ok: self._meeting_done(f, ok)))
+            # Speaker labels a quit or crash left unfinished.
+            try:
+                waiting = speakers_unfinished(self._config["meetings_dir"])
+            except OSError:
+                return
+            for folder in waiting:
+                if folder not in folders:
+                    self._events.put(("action", lambda f=folder: self._find_speakers_later(f)))
 
         threading.Thread(target=run, name="meeting-recovery", daemon=True).start()
 
@@ -824,4 +909,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()  # The packaged app also runs speaker separation (speakers.py)
     main()

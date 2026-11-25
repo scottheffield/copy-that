@@ -5,6 +5,7 @@ import customtkinter as ctk
 import pytest
 
 from dictation_engine import DEFAULT_CONFIG, validate_config
+from ui import theme
 from ui.theme import ThemeController
 from ui.settings import SettingsWindow
 from ui.overlay import OverlayWindow
@@ -58,6 +59,10 @@ def test_settings_survive_appearance_change(root):
         assert saved[-1]["device"] == "CPU"
         assert saved[-1]["dictionary"]["copy that"] == "CopyThat"
         validate_config(saved[-1])
+    assert saved[-1]["meeting_speakers"] is True
+    settings._speakers_var.set(False)
+    settings._apply()
+    assert saved[-1]["meeting_speakers"] is False
     settings._win.destroy()
 
 
@@ -312,6 +317,42 @@ def test_meetings_page_lists_searches_and_renames(root, tmp_path):
         ctk.set_appearance_mode(mode)
         root.update_idletasks()
     window._win.destroy()
+
+
+def test_retranscribing_meeting_shows_percent_and_explains_the_old_transcript(root, tmp_path):
+    folder = make_meeting(tmp_path, "2026-11-25 1030", "2026-11-25T10:30:00", "Call",
+                          lines=[("Me", "Hello there.")])
+    from meetings import read_meta, write_meta
+    meta = read_meta(folder)
+    meta["status"] = "transcribing"
+    write_meta(folder, meta)
+
+    class Busy(FakeMeetings):
+        def meeting_in_use(self, folder):
+            return True
+
+        def meeting_progress(self, folder):
+            return "transcribing", 0.09
+
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=Busy())
+    window.show("Meetings")
+    window._meetings_page.show_detail(folder)
+    root.update_idletasks()
+    texts = page_texts(window._pages["Meetings"])
+    assert "9%" in texts and "Hello there." in texts
+    assert any(t.startswith("Re-transcribing… The transcript below is the previous one") for t in texts)
+    copy = [b for b in all_widgets(window._pages["Meetings"])
+            if isinstance(b, ctk.CTkButton) and b.cget("text") == "Copy as Markdown"]
+    assert copy and copy[0].cget("state") == "disabled"
+    assert copy[0].cget("fg_color") != theme.ACCENT  # Outlined while disabled, not washed-out blue
+    window._meetings_page._stop_progress()
+    window._win.destroy()
+
+
+def all_widgets(widget):
+    for child in widget.winfo_children():
+        yield child
+        yield from all_widgets(child)
 
 
 def test_meetings_page_empty_state(root, tmp_path):

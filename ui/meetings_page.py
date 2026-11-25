@@ -8,7 +8,7 @@ import customtkinter as ctk
 import meetings
 from ui import theme
 
-PREVIEW_LINES = 14
+LINES_PER_BATCH = 25  # Transcript lines drawn per idle moment, so a long meeting opens without freezing
 SEARCH_DELAY_MS = 250
 STATUS_TEXT = {
     "recording": "Recording",
@@ -19,6 +19,17 @@ STATUS_TEXT = {
 
 
 MENU_PATH_WIDTH = 340  # The Folder popover's path line, in unscaled px
+PROGRESS_MS = 700      # How often a transcript or speaker progress line updates
+
+
+def progress_text(progress):
+    """The status line for (stage, fraction) from meeting_progress."""
+    stage, fraction = progress
+    if stage == "transcribing":
+        return f"Transcribing\u2026 {int(fraction * 100)}%"
+    if stage == "speakers":
+        return f"Finding speakers\u2026 {int(fraction * 100)}%"
+    return "Finding speakers\u2026"
 
 
 def _shorten_path(path, font, width):
@@ -69,6 +80,8 @@ class MeetingsPage:
         self._search_job = None
         self._results = None
         self._pending = None  # Saves a title being typed when the view changes underneath it
+        self._live = []       # (folder, label, parts, bar) lines showing progress
+        self._progress_id = None
 
     # -- Shared ---------------------------------------------------------------
 
@@ -87,6 +100,7 @@ class MeetingsPage:
         for child in self._page.winfo_children():
             child.destroy()
         self._results = None
+        self._stop_progress()
         if self._detail is None:
             self._render_header()
             self._page.pack_forget()  # Re-pack so the header sits above the scrolling body
@@ -100,6 +114,67 @@ class MeetingsPage:
             self._page._parent_canvas.yview_moveto(0)
         except Exception:
             pass
+        self._start_progress()
+
+    def _progress(self, folder):
+        getter = getattr(self._provider, "meeting_progress", None)
+        return getter(folder) if getter else None
+
+    def _show_progress(self, folder, label, parts=None, bar=None):
+        """Keep label (and bar) up to date while folder transcribes or finds speakers.
+        parts: text shown before the progress, joined with a dot."""
+        self._live.append((folder, label, parts, bar))
+        self._update_line(folder, label, parts, bar, self._progress(folder))
+
+    @staticmethod
+    def _update_line(folder, label, parts, bar, progress):
+        if not label.winfo_exists() or progress is None:
+            return
+        text = progress_text(progress)
+        label.configure(text=" \u00b7 ".join([*parts, text]) if parts else text)
+        if bar is not None and bar.winfo_exists():
+            percent = getattr(bar, "percent", None)
+            if percent is not None and percent.winfo_exists():
+                percent.configure(text="" if progress[1] is None else f"{int(progress[1] * 100)}%")
+            if progress[1] is None:
+                if bar.cget("mode") != "indeterminate":
+                    bar.configure(mode="indeterminate")
+                    bar.start()
+            else:
+                if bar.cget("mode") != "determinate":
+                    bar.stop()
+                    bar.configure(mode="determinate")
+                bar.set(progress[1])
+
+    def _start_progress(self):
+        if self._live and self._progress_id is None:
+            self._progress_id = self._outer.after(PROGRESS_MS, self._tick_progress)
+
+    def _stop_progress(self):
+        if self._progress_id:
+            try:
+                self._outer.after_cancel(self._progress_id)
+            except Exception:
+                pass
+        self._progress_id = None
+        for _, _, _, bar in self._live:
+            if bar is not None and bar.winfo_exists():
+                bar.stop()
+        self._live = []
+
+    def _tick_progress(self):
+        """A stage that ends leaves its line as it is; the app redraws the page when it does."""
+        self._progress_id = None
+        still = []
+        for folder, label, parts, bar in self._live:
+            if not label.winfo_exists():
+                continue
+            progress = self._progress(folder)
+            self._update_line(folder, label, parts, bar, progress)
+            if progress is not None:
+                still.append((folder, label, parts, bar))
+        self._live = still
+        self._start_progress()
 
     def _in_use(self, item):
         if item["status"] in meetings.BUSY:
@@ -107,9 +182,12 @@ class MeetingsPage:
         return bool(self._provider and self._provider.meeting_in_use(item["folder"]))
 
     def _button(self, parent, text, command, primary=False, state="normal"):
+        # A disabled button keeps its fill and only dims the text, so a disabled primary
+        # button would be washed-out blue. Draw it outlined, like the other disabled buttons.
         options = dict(fg_color=theme.ACCENT, hover_color=theme.ACCENT_HOVER, text_color=theme.ON_ACCENT) \
-            if primary else dict(fg_color=theme.SURFACE, hover_color=theme.SELECTED, text_color=theme.TEXT,
-                                 border_color=theme.BORDER, border_width=1)
+            if primary and state != "disabled" else dict(
+                fg_color=theme.SURFACE, hover_color=theme.SELECTED, text_color=theme.TEXT,
+                border_color=theme.BORDER, border_width=1)
         button = ctk.CTkButton(parent, text=text, command=command, height=30, width=0, state=state, **options)
         button.pack(side="left", padx=(0, 8), pady=(0, 8))
         return button
@@ -350,8 +428,14 @@ class MeetingsPage:
                              font=ctk.CTkFont(size=15, weight="bold"))
         title.pack(fill="x")
         detail = STATUS_TEXT.get(status) or f"{item['started']:%I:%M %p}".lstrip("0")
+        progress = self._progress(item["folder"])
+        if progress is not None:
+            color = theme.WARNING
         sub = ctk.CTkLabel(text, text=detail, text_color=color, anchor="w", font=ctk.CTkFont(size=13))
         sub.pack(fill="x")
+        if progress is not None:
+            parts = [] if status == "transcribing" else [f"{item['started']:%I:%M %p}".lstrip("0")]
+            self._show_progress(item["folder"], sub, parts)
         clickable = []
         if found:
             speaker, before, hit, after = found
@@ -466,17 +550,31 @@ class MeetingsPage:
         parts = [when, f"{started:%I:%M %p}".lstrip("0")]
         if item["status"] != "recording":
             parts.append(meetings.clock(item["duration"]))
-        if item["status"] in STATUS_TEXT:
+        progress = self._progress(folder)
+        if item["status"] in STATUS_TEXT and not (progress and item["status"] == "transcribing"):
             parts.append(STATUS_TEXT[item["status"]])
-        ctk.CTkLabel(page, text=" · ".join(parts), text_color=theme.MUTED,
-                     font=ctk.CTkFont(size=13)).pack(anchor="w", padx=20, pady=(2, 12))
+        meta_line = ctk.CTkLabel(page, text=" · ".join(parts), text_color=theme.MUTED,
+                                 font=ctk.CTkFont(size=13))
+        meta_line.pack(anchor="w", padx=20, pady=(2, 4 if progress else 12))
+        if progress is not None:
+            row = ctk.CTkFrame(page, fg_color="transparent")
+            row.pack(fill="x", padx=20, pady=(4, 12))
+            bar = ctk.CTkProgressBar(row, height=10, corner_radius=5, progress_color=theme.ACCENT,
+                                     fg_color=theme.BORDER)
+            bar.set(0)
+            bar.percent = ctk.CTkLabel(row, text="", width=44, anchor="e", text_color=theme.TEXT,
+                                       font=ctk.CTkFont(size=13, weight="bold"))
+            bar.percent.pack(side="right", padx=(10, 0))
+            bar.pack(side="left", fill="x", expand=True)
+            self._show_progress(folder, meta_line, parts, bar)
 
         text = meetings.read_transcript(folder)
         busy = self._in_use(item)
         actions = ctk.CTkFrame(page, fg_color="transparent")
         actions.pack(fill="x", padx=20)
+        # Greyed while busy, so the progress bar is the only accent on the page.
         copy = self._button(actions, "Copy as Markdown", None, primary=True,
-                            state="normal" if text else "disabled")
+                            state="normal" if text and not busy else "disabled")
         copy.configure(command=lambda: self._copy(folder, copy))
         self._button(actions, "Rename", lambda: (entry.focus_set(), entry.select_range(0, "end")))
         self._button(actions, "Open transcript", lambda: self._open(folder / "transcript.md"),
@@ -495,7 +593,11 @@ class MeetingsPage:
             "failed": "Transcription failed. Re-transcribe to try again.",
             "interrupted": "The transcript wasn't finished. It finishes on the next launch, or Re-transcribe now.",
         }.get(item["status"])
-        if message and not (text and item["status"] == "done"):
+        if text and item["status"] == "transcribing":
+            message = "Re-transcribing… The transcript below is the previous one until this finishes."
+        if text and progress and progress[0] != "transcribing":
+            message = "Finding who spoke. The lines below get Speaker 1, Speaker 2 and so on when it's done."
+        if message and not (text and item["status"] == "done" and not progress):
             note = ctk.CTkLabel(page, text=message, text_color=theme.MUTED, justify="left", anchor="w")
             note.pack(fill="x", padx=20, pady=(0, 12))
             _wrap(note, page, 40)
@@ -506,21 +608,36 @@ class MeetingsPage:
             ctk.CTkLabel(page, text="No speech was recognized.", text_color=theme.MUTED).pack(anchor="w", padx=20)
             return
         preview = ctk.CTkFrame(page, fg_color="transparent")
-        preview.pack(fill="x", padx=20)
+        preview.pack(fill="x", padx=20, pady=(0, 16))
         preview.grid_columnconfigure(2, weight=1)
-        for row, (stamp, speaker, said) in enumerate(lines[:PREVIEW_LINES]):
-            ctk.CTkLabel(preview, text=stamp, text_color=theme.MUTED, font=ctk.CTkFont(size=13),
+        fonts = (ctk.CTkFont(size=13), ctk.CTkFont(size=14, weight="bold"), ctk.CTkFont(size=15))
+        self._draw_lines(preview, lines, 0, fonts)
+
+    @staticmethod
+    def _body_wrap(preview):
+        """Wrap width for a new line: the frame's, once it has been laid out."""
+        width = preview.winfo_width()
+        return 360 if width <= 1 else max(100, width / preview._get_widget_scaling() - 150)
+
+    def _draw_lines(self, preview, lines, start, fonts):
+        """The whole transcript, a batch at a time; stops if the page was redrawn meanwhile."""
+        if not preview.winfo_exists():
+            return
+        stamp_font, speaker_font, body_font = fonts
+        end = min(len(lines), start + LINES_PER_BATCH)
+        for row in range(start, end):
+            stamp, speaker, said = lines[row]
+            ctk.CTkLabel(preview, text=stamp, text_color=theme.MUTED, font=stamp_font,
                          anchor="nw").grid(row=row, column=0, sticky="nw", padx=(0, 10), pady=(0, 10))
-            ctk.CTkLabel(preview, text=speaker, anchor="nw", font=ctk.CTkFont(size=14, weight="bold"),
+            ctk.CTkLabel(preview, text=speaker, anchor="nw", font=speaker_font,
                          text_color=theme.ACCENT if speaker == "Me" else theme.MUTED,
                          ).grid(row=row, column=1, sticky="nw", padx=(0, 10), pady=(0, 10))
             body = ctk.CTkLabel(preview, text=said, text_color=theme.TEXT, justify="left", anchor="nw",
-                                font=ctk.CTkFont(size=15), wraplength=360)
+                                font=body_font, wraplength=self._body_wrap(preview))
             body.grid(row=row, column=2, sticky="new", pady=(0, 10))
             _wrap(body, preview, 150)
-        if len(lines) > PREVIEW_LINES:
-            ctk.CTkLabel(page, text="The preview shows the start of the meeting. Open transcript for all of it.",
-                         text_color=theme.MUTED, font=ctk.CTkFont(size=13)).pack(anchor="w", padx=20, pady=(4, 16))
+        if end < len(lines):
+            preview.after(1, lambda: self._draw_lines(preview, lines, end, fonts))
 
     def _rename(self, folder, title, item):
         title = " ".join(title.split())
