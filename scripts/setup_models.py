@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dictation_engine import CLEANUP_REGISTRY, MODEL_DIR, MODEL_REGISTRY, load_config, save_config
 from model_store import download
+import speaker_models
 
 CLEANUP_MODELS = {key: info["repo"] for key, info in CLEANUP_REGISTRY.items()}
 
@@ -20,6 +21,7 @@ def main():
     info = MODEL_REGISTRY[speech]
     manifest = download(info["ov_repo"], MODEL_DIR / info["local_dir"], revision=info["revision"])
     print(f"Speech snapshot ready: {speech} @ {manifest['revision']}")
+    print(f"Speaker models ready: {speaker_models.fetch()}")
     if args.cleanup:
         cleanup = CLEANUP_REGISTRY[args.cleanup]
         path = MODEL_DIR / cleanup["local_dir"]

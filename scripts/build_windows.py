@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from app_paths import APP_NAME
 from model_store import verify
+import speaker_models
 from ui.icons import save_app_icon, save_welcome_bitmap
 from version import COMMIT_FILE, VERSION, commit
 
@@ -55,6 +56,8 @@ def main():
     # The installed app has no git; it reads the commit from this file.
     (icon.parent / COMMIT_FILE).write_text(commit(), encoding="utf-8")
     if not args.skip_app_build:
+        # Bundled into the app by the spec (speaker_models/); verified by checksum.
+        speaker_models.fetch()
         subprocess.run([sys.executable, "-m", "PyInstaller", str(ROOT / f"packaging/{APP_NAME}.spec"),
                         "--distpath", str(dist), "--workpath", str(ROOT / ".runtime/package-build"),
                         "--noconfirm"], cwd=ROOT, check=True, env={**os.environ, "APP_ICON": str(icon)})
