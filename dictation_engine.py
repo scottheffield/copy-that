@@ -75,6 +75,7 @@ DEFAULT_CONFIG = {
     # Meeting recordings: one folder per meeting. Kept out of synced folders by default.
     "meetings_dir": str(Path.home() / "CopyThat Meetings"),
     "meeting_skip_dictation": True,  # Leave dictation takes out of the meeting's mic track
+    "meeting_speakers": True,        # Label Speaker 1..N in meeting transcripts (#44)
     "meeting_chip_position": None,   # [right, top] in screen px once the chip is dragged
     "meeting_consent_seen": False,   # The consent note shows under the chip until dismissed
     "main_window_page": "General",   # Page the tray's left-click reopens: History or a settings page
