@@ -19,6 +19,17 @@ STATUS_TEXT = {
 
 
 MENU_PATH_WIDTH = 340  # The Folder popover's path line, in unscaled px
+PROGRESS_MS = 700      # How often a transcript or speaker progress line updates
+
+
+def progress_text(progress):
+    """The status line for (stage, fraction) from meeting_progress."""
+    stage, fraction = progress
+    if stage == "transcribing":
+        return f"Transcribing\u2026 {int(fraction * 100)}%"
+    if stage == "speakers":
+        return f"Finding speakers\u2026 {int(fraction * 100)}%"
+    return "Finding speakers\u2026"
 
 
 def _shorten_path(path, font, width):
@@ -69,6 +80,8 @@ class MeetingsPage:
         self._search_job = None
         self._results = None
         self._pending = None  # Saves a title being typed when the view changes underneath it
+        self._live = []       # (folder, label, parts, bar) lines showing progress
+        self._progress_id = None
 
     # -- Shared ---------------------------------------------------------------
 
@@ -87,6 +100,7 @@ class MeetingsPage:
         for child in self._page.winfo_children():
             child.destroy()
         self._results = None
+        self._stop_progress()
         if self._detail is None:
             self._render_header()
             self._page.pack_forget()  # Re-pack so the header sits above the scrolling body
@@ -100,6 +114,64 @@ class MeetingsPage:
             self._page._parent_canvas.yview_moveto(0)
         except Exception:
             pass
+        self._start_progress()
+
+    def _progress(self, folder):
+        getter = getattr(self._provider, "meeting_progress", None)
+        return getter(folder) if getter else None
+
+    def _show_progress(self, folder, label, parts=None, bar=None):
+        """Keep label (and bar) up to date while folder transcribes or finds speakers.
+        parts: text shown before the progress, joined with a dot."""
+        self._live.append((folder, label, parts, bar))
+        self._update_line(folder, label, parts, bar, self._progress(folder))
+
+    @staticmethod
+    def _update_line(folder, label, parts, bar, progress):
+        if not label.winfo_exists() or progress is None:
+            return
+        text = progress_text(progress)
+        label.configure(text=" \u00b7 ".join([*parts, text]) if parts else text)
+        if bar is not None and bar.winfo_exists():
+            if progress[1] is None:
+                if bar.cget("mode") != "indeterminate":
+                    bar.configure(mode="indeterminate")
+                    bar.start()
+            else:
+                if bar.cget("mode") != "determinate":
+                    bar.stop()
+                    bar.configure(mode="determinate")
+                bar.set(progress[1])
+
+    def _start_progress(self):
+        if self._live and self._progress_id is None:
+            self._progress_id = self._outer.after(PROGRESS_MS, self._tick_progress)
+
+    def _stop_progress(self):
+        if self._progress_id:
+            try:
+                self._outer.after_cancel(self._progress_id)
+            except Exception:
+                pass
+        self._progress_id = None
+        for _, _, _, bar in self._live:
+            if bar is not None and bar.winfo_exists():
+                bar.stop()
+        self._live = []
+
+    def _tick_progress(self):
+        """A stage that ends leaves its line as it is; the app redraws the page when it does."""
+        self._progress_id = None
+        still = []
+        for folder, label, parts, bar in self._live:
+            if not label.winfo_exists():
+                continue
+            progress = self._progress(folder)
+            self._update_line(folder, label, parts, bar, progress)
+            if progress is not None:
+                still.append((folder, label, parts, bar))
+        self._live = still
+        self._start_progress()
 
     def _in_use(self, item):
         if item["status"] in meetings.BUSY:
@@ -350,8 +422,14 @@ class MeetingsPage:
                              font=ctk.CTkFont(size=15, weight="bold"))
         title.pack(fill="x")
         detail = STATUS_TEXT.get(status) or f"{item['started']:%I:%M %p}".lstrip("0")
+        progress = self._progress(item["folder"])
+        if progress is not None:
+            color = theme.WARNING
         sub = ctk.CTkLabel(text, text=detail, text_color=color, anchor="w", font=ctk.CTkFont(size=13))
         sub.pack(fill="x")
+        if progress is not None:
+            parts = [] if status == "transcribing" else [f"{item['started']:%I:%M %p}".lstrip("0")]
+            self._show_progress(item["folder"], sub, parts)
         clickable = []
         if found:
             speaker, before, hit, after = found
@@ -466,10 +544,17 @@ class MeetingsPage:
         parts = [when, f"{started:%I:%M %p}".lstrip("0")]
         if item["status"] != "recording":
             parts.append(meetings.clock(item["duration"]))
-        if item["status"] in STATUS_TEXT:
+        progress = self._progress(folder)
+        if item["status"] in STATUS_TEXT and not (progress and item["status"] == "transcribing"):
             parts.append(STATUS_TEXT[item["status"]])
-        ctk.CTkLabel(page, text=" · ".join(parts), text_color=theme.MUTED,
-                     font=ctk.CTkFont(size=13)).pack(anchor="w", padx=20, pady=(2, 12))
+        meta_line = ctk.CTkLabel(page, text=" · ".join(parts), text_color=theme.MUTED,
+                                 font=ctk.CTkFont(size=13))
+        meta_line.pack(anchor="w", padx=20, pady=(2, 4 if progress else 12))
+        if progress is not None:
+            bar = ctk.CTkProgressBar(page, height=6, progress_color=theme.ACCENT, fg_color=theme.BORDER)
+            bar.set(0)
+            bar.pack(fill="x", padx=20, pady=(4, 12))
+            self._show_progress(folder, meta_line, parts, bar)
 
         text = meetings.read_transcript(folder)
         busy = self._in_use(item)
@@ -495,7 +580,9 @@ class MeetingsPage:
             "failed": "Transcription failed. Re-transcribe to try again.",
             "interrupted": "The transcript wasn't finished. It finishes on the next launch, or Re-transcribe now.",
         }.get(item["status"])
-        if message and not (text and item["status"] == "done"):
+        if text and progress and progress[0] != "transcribing":
+            message = "Finding who spoke. The lines below get Speaker 1, Speaker 2 and so on when it's done."
+        if message and not (text and item["status"] == "done" and not progress):
             note = ctk.CTkLabel(page, text=message, text_color=theme.MUTED, justify="left", anchor="w")
             note.pack(fill="x", padx=20, pady=(0, 12))
             _wrap(note, page, 40)

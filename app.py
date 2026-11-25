@@ -595,8 +595,18 @@ class GUIApp:
             from dictation_engine import chime_stop
             chime_stop()
         self._chip.show_finishing(session.meta["duration_seconds"])
+        self._poll_finishing()
         self._tray.update_state(self._tray._state)
         self._refresh_meetings()
+
+    def _poll_finishing(self):
+        """The chip's Finishing shows how much of the transcript is done."""
+        from meetings import transcribe_progress
+        session = self._meeting
+        if not session or self._chip.state != "finishing":
+            return
+        self._chip.set_progress(transcribe_progress(session.folder))
+        self._root.after(500, self._poll_finishing)
 
     def _meeting_done(self, folder, ok):
         log(f"Meeting: transcript {'saved' if ok else 'not finished'} in {folder.name}")
@@ -642,6 +652,20 @@ class GUIApp:
         if current and current.folder == folder and not current.finished.is_set():
             return True
         return folder in self._retranscribing or self.finding_speakers(folder)
+
+    def meeting_progress(self, folder):
+        """(stage, fraction) while a meeting's transcript is being finished or its speakers
+        found: ("transcribing", 0.4), ("speakers", 0.6), ("speakers waiting", None); else None."""
+        from meetings import transcribe_progress
+        from speakers import progress
+        folder = Path(folder)
+        fraction = transcribe_progress(folder)
+        if fraction is not None:
+            return "transcribing", fraction
+        if self.finding_speakers(folder):
+            fraction = progress(folder)
+            return ("speakers", fraction) if fraction is not None else ("speakers waiting", None)
+        return None
 
     def finding_speakers(self, folder):
         """True while speakers are being labeled in folder, or it is waiting its turn."""

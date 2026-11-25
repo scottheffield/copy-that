@@ -32,6 +32,12 @@ class Stopped(Exception):
 
 
 _diarizer = None
+_progress = {}  # folder -> fraction done, while its speakers are being found
+
+
+def progress(folder):
+    """Fraction done while a meeting's speakers are being found, else None."""
+    return _progress.get(Path(folder))
 
 
 def _load():
@@ -64,12 +70,16 @@ def read_track(path):
     return np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
 
 
-def diarize(samples, stopped=lambda: False):
+def diarize(samples, stopped=lambda: False, report=lambda fraction: None):
     """[(start, end, speaker id)] sorted by start, for 16 kHz samples."""
     diarizer = _load()
     if diarizer.sample_rate != RATE:
         raise ValueError("Speaker models expect a different sample rate")
-    result = diarizer.process(samples, callback=lambda done, total: 1 if stopped() else 0)
+
+    def callback(done, total):
+        report(done / total if total else 0.0)
+        return 1 if stopped() else 0
+    result = diarizer.process(samples, callback=callback)
     if stopped():
         raise Stopped()
     return [(s.start, s.end, s.speaker) for s in result.sort_by_start_time()]
@@ -133,9 +143,10 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=diarize):
         return "done"
     _set_status(folder, "running")
     started = time.monotonic()
+    _progress[folder] = 0.0
     try:
         samples = read_track(folder / f"{track}.wav")
-        segments = diarize_fn(samples, stopped)
+        segments = diarize_fn(samples, stopped, lambda f: _progress.__setitem__(folder, f))
         del samples
         ids = assign([w.time for w in words], segments)
     except Stopped:
@@ -145,6 +156,8 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=diarize):
         log(f"Meeting: finding speakers failed ({type(error).__name__}: {error})")
         _set_status(folder, "failed")
         return "failed"
+    finally:
+        _progress.pop(folder, None)
     count = len({i for i in ids if i is not None})
     meta = read_meta(folder)
     if count > 1:

@@ -92,6 +92,11 @@ class WindowedTranscript:
             self.complete = True
         return added
 
+    @property
+    def position(self):
+        """Samples recognized so far (the start of the next window)."""
+        return self._start
+
     def preview(self, audio):
         """Final windows plus a provisional pass over the open tail; commits nothing."""
         if self._start >= len(audio):

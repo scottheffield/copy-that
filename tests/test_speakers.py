@@ -53,7 +53,7 @@ def test_find_speakers_relabels_others_and_keeps_me(tmp_path):
     mic = words("hi all", 0.0)
     others = words("thanks for having me", 2.0) + words("glad to be here", 6.0)
     folder = make_meeting(tmp_path, mic, others)
-    fake = lambda samples, stopped: [(1.9, 4.0, 0), (5.9, 8.0, 1)]
+    fake = lambda samples, stopped, report: [(1.9, 4.0, 0), (5.9, 8.0, 1)]
     assert speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake) == "done"
     lines = meetings.transcript_lines(meetings.read_transcript(folder))
     assert [(s, t) for _, s, t in lines] == [("Me", "hi all"), ("Speaker 1", "thanks for having me"),
@@ -64,7 +64,7 @@ def test_find_speakers_relabels_others_and_keeps_me(tmp_path):
 def test_find_speakers_splits_a_line_when_the_speaker_changes(tmp_path):
     others = words("one two three four", 1.0)  # No pause, so one line before labeling
     folder = make_meeting(tmp_path, [], others)
-    fake = lambda samples, stopped: [(0.9, 1.5, 0), (1.6, 3.0, 1)]
+    fake = lambda samples, stopped, report: [(0.9, 1.5, 0), (1.6, 3.0, 1)]
     speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
     lines = meetings.transcript_lines(meetings.read_transcript(folder))
     assert [(s, t) for _, s, t in lines] == [("Speaker 1", "one two"), ("Speaker 2", "three four")]
@@ -74,7 +74,7 @@ def test_in_person_meeting_labels_the_mic(tmp_path):
     mic = words("good morning", 0.0) + words("morning", 3.0)
     folder = make_meeting(tmp_path, mic, [], heard=False)
     seen = []
-    def fake(samples, stopped):
+    def fake(samples, stopped, report):
         seen.append(len(samples))
         return [(0.0, 1.0, 0), (2.9, 3.5, 1)]
     speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
@@ -87,14 +87,14 @@ def test_in_person_meeting_labels_the_mic(tmp_path):
 def test_one_voice_leaves_the_transcript_alone(tmp_path):
     folder = make_meeting(tmp_path, [], words("just me talking", 1.0))
     before = meetings.read_transcript(folder)
-    speakers.find_speakers(folder, log=lambda _: None, diarize_fn=lambda s, stopped: [(0.0, 5.0, 3)])
+    speakers.find_speakers(folder, log=lambda _: None, diarize_fn=lambda s, stopped, report: [(0.0, 5.0, 3)])
     assert meetings.read_transcript(folder) == before
     assert meetings.read_meta(folder)["speakers"]["count"] == 1
 
 
 def test_a_rename_meanwhile_is_kept(tmp_path):
     folder = make_meeting(tmp_path, [], words("a b", 1.0) + words("c d", 5.0))
-    def fake(samples, stopped):
+    def fake(samples, stopped, report):
         meetings.rename_meeting(folder, "Quarterly panel")
         return [(0.0, 2.0, 0), (4.5, 6.0, 1)]
     speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
@@ -104,11 +104,11 @@ def test_a_rename_meanwhile_is_kept(tmp_path):
 
 def test_quitting_leaves_it_pending_and_failure_is_recorded(tmp_path):
     folder = make_meeting(tmp_path, [], words("a b", 1.0))
-    def quit_(samples, stopped):
+    def quit_(samples, stopped, report):
         raise speakers.Stopped()
     assert speakers.find_speakers(folder, log=lambda _: None, diarize_fn=quit_) == "pending"
     assert meetings.speakers_unfinished(tmp_path) == [folder]
-    def broken(samples, stopped):
+    def broken(samples, stopped, report):
         raise RuntimeError("model")
     assert speakers.find_speakers(folder, log=lambda _: None, diarize_fn=broken) == "failed"
     assert meetings.speakers_unfinished(tmp_path) == []
@@ -196,3 +196,32 @@ def test_app_skips_labeling_when_the_setting_is_off(tmp_path):
     gui._speaker_folder = folder
     gui._speaker_worker()
     assert meetings.read_meta(folder)["speakers"] == {"status": "skipped", "reason": "off"}
+
+
+def test_progress_text():
+    from ui.meetings_page import progress_text
+    assert progress_text(("transcribing", 0.423)) == "Transcribing\u2026 42%"
+    assert progress_text(("speakers", 0.6)) == "Finding speakers\u2026 60%"
+    assert progress_text(("speakers waiting", None)) == "Finding speakers\u2026"
+
+
+def test_speaker_progress_is_reported_while_running(tmp_path):
+    folder = make_meeting(tmp_path, [], words("a b", 1.0) + words("c d", 5.0))
+    seen = []
+    def fake(samples, stopped, report):
+        report(0.5)
+        seen.append(speakers.progress(folder))
+        return [(0.0, 2.0, 0), (4.5, 6.0, 1)]
+    speakers.find_speakers(folder, log=lambda _: None, diarize_fn=fake)
+    assert seen == [0.5] and speakers.progress(folder) is None
+
+
+def test_transcribe_progress_counts_both_tracks(tmp_path):
+    job = meetings.MeetingTranscription.__new__(meetings.MeetingTranscription)
+    class Part:
+        def __init__(self, done, total):
+            self.d, self.t = done, total
+        def done_and_total(self):
+            return self.d, self.t
+    job._tracks = {"mic": Part(100, 100), "others": Part(0, 100)}
+    assert job.progress() == 0.5

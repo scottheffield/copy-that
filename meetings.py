@@ -619,6 +619,13 @@ class TrackTranscriber:
     def words(self):
         return list(self._transcript.words) if self._transcript else []
 
+    def done_and_total(self):
+        """(samples recognized, samples in the track), for progress."""
+        total = len(self.track)
+        if self._transcript is None:
+            return 0, total
+        return (total if self._transcript.complete else min(total, self._transcript.position)), total
+
 
 def utterances(words, speaker, gap=UTTERANCE_GAP, labels=None):
     """Group a track's words into lines, a new line after a pause or a change of speaker.
@@ -778,6 +785,17 @@ def speakers_unfinished(root):
 
 # -- Orchestration ------------------------------------------------------------
 
+_finishing = {}  # folder -> MeetingTranscription writing its final transcript
+_finishing_lock = threading.Lock()
+
+
+def transcribe_progress(folder):
+    """Fraction of a meeting's audio recognized while its transcript is being finished, else None."""
+    with _finishing_lock:
+        job = _finishing.get(Path(folder))
+    return job.progress() if job else None
+
+
 class MeetingTranscription:
     """Transcribe a meeting's two tracks and write transcript.md.
 
@@ -806,8 +824,24 @@ class MeetingTranscription:
     def stop_live(self):
         self._stop_live.set()
 
+    def progress(self):
+        done = total = 0
+        for transcriber in self._tracks.values():
+            d, t = transcriber.done_and_total()
+            done, total = done + d, total + t
+        return done / total if total else 0.0
+
     def finish(self, meta, stopped=lambda: False):
         """Final windows of both tracks, waiting for dictation if needed; writes the transcript."""
+        with _finishing_lock:
+            _finishing[self.folder] = self
+        try:
+            return self._finish(meta, stopped)
+        finally:
+            with _finishing_lock:
+                _finishing.pop(self.folder, None)
+
+    def _finish(self, meta, stopped):
         pending = dict(self._tracks)
         while pending and not stopped():
             for name in list(pending):
