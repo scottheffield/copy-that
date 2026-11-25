@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VERSION = "0.3.2"
+VERSION = "0.4.0"
 # Written by scripts/build_windows.py into the packaged app.
 COMMIT_FILE = "build_commit.txt"
 
