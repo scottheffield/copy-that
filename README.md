@@ -2,7 +2,7 @@
 
 <img src="docs/icon.png" alt="CopyThat icon: a blue speech bubble with a yellow check" width="96">
 
-A local Windows dictation app. Dictate into text fields in browsers, email, chat, documents, editors, and other desktop apps, with no destination-specific integration required.
+A local Windows dictation app. Dictate into text fields in browsers, email, chat, documents, editors, and other desktop apps, with no destination-specific integration required. It also records meetings in any meeting app and transcribes who said what, all on your PC ([Meetings](#meetings)).
 
 Speech recognition uses OpenVINO. Parakeet runs entirely on the Intel GPU, which measured faster than placing its encoder on the NPU; Whisper models still prefer the NPU. Optional Qwen3 cleanup also runs on the GPU in the same process. Runtime uses local model files; a model downloads only when you click Download.
 
@@ -38,13 +38,25 @@ The app lives in the system tray. The floating pill is hidden while idle and sho
 
 Up to three unfinished takes can overlap. Processing and pasting remain ordered. Each pasted take ends with a space so the next take starts a new word. Existing trailing whitespace is preserved and auto-submit omits the added space. History keeps the transcript without the added separator. Recordings stop at 5 minutes by default, with a low double pluck 15 seconds before the limit. Audio cues: a pluck once the microphone is actually delivering audio, a lower pluck on release, and a rising two-note pluck when text is pasted. Silence detection rejects takes without enough detected speech before recognition.
 
-## Meetings (early)
+## Meetings
 
-Right-click the tray icon and choose **Record meeting** to record a call, and **Stop meeting recording** when it ends. CopyThat records two tracks: your microphone, labeled "Me", and whatever the laptop plays, labeled "Others". Nothing joins the call, and nothing is uploaded.
+Click **Record meeting** at the top of the Meetings page, or in the tray menu, to record a call, and **Stop** when it ends. CopyThat records two tracks: your microphone, labeled "Me", and whatever the laptop plays, labeled "Others". It works with any meeting app. Nothing joins the call, and nothing is uploaded. The output track records the Windows default speaker, so set your meeting app's speaker to Default.
 
-Each meeting gets a folder under `CopyThat Meetings` in your user folder, holding `mic.wav`, `others.wav`, `transcript.md`, and `meta.json`. **Open meetings folder** in the tray menu goes there. To save meetings somewhere else, use **Change folder…** on the Meetings page, which offers to move the meetings already saved. If the chosen folder is unavailable, for example on an unplugged drive, new meetings go to `CopyThat Meetings` until it returns. Most of the meeting is transcribed during the call, so the transcript is written a few seconds after Stop. Dictation keeps working during a meeting and always goes first. Your dictated words stay out of the meeting transcript; turn that off with **Leave dictation out of meeting transcripts** in Settings. The mic button on the meeting chip (or **Mute my mic in the meeting** in the tray menu) mutes your side while the other side keeps recording. A mute longer than 5 seconds is marked in the transcript. If CopyThat quits or crashes mid-meeting, the audio is kept and the transcript is written the next time it starts.
+Most of the meeting is transcribed during the call, so the transcript is written a few seconds after Stop. Dictation keeps working during a meeting and always goes first. Your dictated words stay out of the meeting transcript; turn that off with **Leave dictation out of meeting transcripts** in Settings. The mic button on the meeting chip (or **Mute my mic in the meeting** in the tray menu) mutes your side while the other side keeps recording. A mute longer than 5 seconds is marked in the transcript.
 
-When the laptop plays nothing for the whole recording, as in an in-person meeting, everyone is on the microphone track and the transcript labels them "Speaker". The output track records the Windows default speaker, so set your meeting app's speaker to Default.
+**Speakers.** After the transcript is written, CopyThat finds the different voices on the other side and labels them Speaker 1, Speaker 2, and so on, numbered by who speaks first. A voice with only a few words is merged into the speakers around it. When the laptop plays nothing for the whole recording, as in an in-person meeting, everyone is on the microphone track, labeled "Speaker", and the voices there are separated instead. On a long meeting this takes a few minutes, with progress on the meeting's page. Turn it off with **Label speakers in meeting transcripts** in Settings > General.
+
+Click a line's speaker to fix the labels:
+
+- Pick another speaker to move that line to them. The **›** next to a speaker also offers to move all of this speaker's lines, which merges the two.
+- Type a name to add a speaker and move the line to them.
+- The pencil renames this speaker on every line. A name another speaker already has merges the two, after a confirmation.
+
+The name you give yourself is remembered for later meetings. **Re-transcribe** finds the speakers again, so it resets the other names and moved lines, after a warning.
+
+**Files.** The Meetings page lists your meetings, newest first, with search. Each meeting has **Copy as Markdown** and **Re-transcribe**. Each meeting gets a folder under `CopyThat Meetings` in your user folder, named with its date, time, and title, such as `2026-11-24 2013 Weekly review`. It holds `mic.wav`, `others.wav`, `transcript.md`, and `meta.json`, plus the word timings and speaker names. The title in CopyThat is the meeting's name: renaming a meeting renames its folder, and a folder renamed by hand gets its title back the next time CopyThat starts. **Folder ▾** on the Meetings page opens the meetings folder, or uses **Change folder…** to save meetings somewhere else, and offers to move the meetings already saved. If the chosen folder is unavailable, for example on an unplugged drive, new meetings go to `CopyThat Meetings` until it returns.
+
+If CopyThat quits or crashes mid-meeting, the audio is kept. Nothing restarts by itself at the next launch: the meeting says it didn't finish, and **Re-transcribe** finishes it.
 
 Recording other people may require their consent, and the rules vary by place. Following them is your responsibility. Nothing on the call tells other people they are being recorded.
 
