@@ -5,6 +5,10 @@ bold timer, level bars) so it reads as the same app, but it is a separate
 window: the pill stays free for dictation during the meeting. Two labeled
 waveforms, Me and Others, show at a glance that both sides are being heard.
 
+A mic button next to the timer mutes your side of the meeting; the
+other side keeps recording. Muted, it turns amber with a slash, and the
+Me waveform reads "Muted".
+
 It sits top right by default, can be dragged anywhere, and remembers where it
 was left (its right edge, so it grows leftward when its contents change).
 """
@@ -13,7 +17,8 @@ from collections import deque
 
 from ui import theme
 from ui.glass import (TRANSPARENT_COLOR, TRANSPARENT_RGB, _hex_to_rgba, composite_on_transparent,
-                      pil_to_photo, render_button, render_dot, render_icon_stop, render_pill)
+                      pil_to_photo, render_button, render_dot, render_icon_mic_toggle, render_icon_stop,
+                      render_pill)
 from ui.screen import work_area
 
 FONT = "Segoe UI"
@@ -31,6 +36,7 @@ class MeetingChip:
     BORDER = 2
     BTN_CX = 26         # Stop button / status dot center, as in the dictation bubble
     TEXT_X = 46         # Timer or label, as in the dictation bubble
+    MIC_D = 26          # Mic button diameter
     BARS = 10
     BAR_W, BAR_GAP = 3, 3
     PAD = 16
@@ -40,9 +46,12 @@ class MeetingChip:
     EDGE = 16           # px from the work area's top-right corner by default
 
     def __init__(self, root, on_stop=None, on_open=None, on_consent_seen=None,
-                 position=None, on_moved=None, mode=None):
+                 position=None, on_moved=None, mode=None, on_mute=None):
         self._root = root
-        self._on_stop, self._on_open = on_stop, on_open
+        self._on_stop, self._on_open, self._on_mute = on_stop, on_open, on_mute
+        self.muted = False
+        self._hover_mic = False
+        self._mic_box = None    # (x1, y1, x2, y2) of the mic button, for its tooltip
         self._on_consent_seen, self._on_moved = on_consent_seen, on_moved
         self._right, self._top = (position or (None, None))
         self.state = "hidden"   # hidden, recording, finishing, ready, failed
@@ -69,6 +78,10 @@ class MeetingChip:
         self.RED, self.AMBER, self.GREEN = c(theme.ERROR), c(theme.WARNING), c(theme.SUCCESS)
         # The dictation bubble's stop button
         self._stop_img = render_button(26, self.RED, c(theme.STOP_BG), render_icon_stop(12, self.RED))
+        self._mic_imgs = {
+            False: render_button(self.MIC_D, self.EDGE_COLOR, self.BG, render_icon_mic_toggle(16, self.TEXT)),
+            True: render_button(self.MIC_D, self.AMBER, self.BG, render_icon_mic_toggle(16, self.AMBER, slashed=True)),
+        }
 
     def set_theme(self, mode):
         self._colors(mode)
@@ -127,18 +140,19 @@ class MeetingChip:
     def show_recording(self, consent=False):
         self._cancel_hide()
         self.state, self._consent = "recording", consent
+        self.muted, self._hover_mic = False, False
         self._elapsed, self._problem = 0.0, None
         for wave in self._waves:
             wave.clear()
         self._draw()
         self._win.deiconify()
 
-    def update(self, elapsed, me, others, problem=None, devices=None):
+    def update(self, elapsed, me, others, problem=None, devices=None, muted=False):
         """Called a few times a second while recording: time, 0-1 levels, a problem to
-        show, and (mic, speaker, hint) for the hover panel."""
+        show, (mic, speaker, hint) for the hover panel, and whether the mic is muted."""
         if self.state != "recording":
             return
-        self._elapsed, self._problem = elapsed, problem
+        self._elapsed, self._problem, self.muted = elapsed, problem, muted
         if devices is not None:
             self._devices = devices
         for wave, level in zip(self._waves, (me, others)):
@@ -181,8 +195,9 @@ class MeetingChip:
         self._canvas.delete(probe)
         return x2 - x1
 
-    def _background(self, w, h, radius, border, icon=None, divider=None):
-        key = (w, h, radius, border, icon, divider)
+    def _background(self, w, h, radius, border, icon=None, divider=None, mic=None):
+        """mic: (x, muted) to draw the mic button into the pill, so its edge blends with the chip."""
+        key = (w, h, radius, border, icon, divider, mic)
         photo_src = self._backgrounds.get(key)
         if photo_src is None:
             img = render_pill(w, h, radius=radius, border_color_rgba=_hex_to_rgba(border),
@@ -192,6 +207,8 @@ class MeetingChip:
                 img.alpha_composite(self._stop_img, (self.BTN_CX - 13, h // 2 - 13))
             elif icon:
                 img.alpha_composite(render_dot(10, _hex_to_rgba(icon)), (self.BTN_CX - 5, h // 2 - 5))
+            if mic:
+                img.alpha_composite(self._mic_imgs[mic[1]], (mic[0], h // 2 - self.MIC_D // 2))
             if divider:
                 from PIL import ImageDraw
                 ImageDraw.Draw(img).line([(divider, 12), (divider, h - 13)],
@@ -213,9 +230,13 @@ class MeetingChip:
         # Layout first, so the background can be sized and cached.
         if self.state == "recording":
             timer_w = max(self._measure("00:00", bold), self._measure(clock(self._elapsed), bold))
-            divider = self.TEXT_X + timer_w + 14
+            mic_x = self.TEXT_X + timer_w + 10
+            divider = mic_x + self.MIC_D + 12
             if self._problem:
                 content = [("text", self._problem, self.RED, label_font)]
+            elif self.muted:
+                content = [("text", "Muted", self.AMBER, label_font), ("wave", 0),
+                           ("label", "Others"), ("wave", 1)]
             else:
                 content = [("label", "Me"), ("wave", 0), ("label", "Others"), ("wave", 1)]
             x = divider + 14
@@ -228,11 +249,11 @@ class MeetingChip:
                 else:
                     width = self._measure(value, rest[1])
                 placed.append((kind, value, rest, x, width))
-                x += width + (6 if kind == "label" else 16)
+                x += width + (6 if kind == "label" or (kind == "text" and value == "Muted") else 16)
             w = x - 16 + self.PAD
             icon, border = "stop", (self.RED if self._problem else self.EDGE_COLOR)
         else:
-            divider = None
+            divider = mic_x = None
             label = {"finishing": "Finishing…", "ready": "Transcript ready",
                      "failed": "Transcript failed"}[self.state]
             x = self.TEXT_X + self._measure(label, label_font) + 12
@@ -257,11 +278,16 @@ class MeetingChip:
         if self._consent:
             note_w = self._measure(note_text, small) + self._measure("Got it", label_font) + 3 * self.PAD + 8
             note_h = self.NOTE_H
-        elif self._hover and self.state == "recording" and self._devices:
-            mic, speaker, hint = self._devices
-            lines = [(f"Me: {mic or 'unknown'}", self.MUTED), (f"Others: {speaker or 'unknown'}", self.MUTED)]
-            if hint:
-                lines.append((hint, self.AMBER))
+        elif self._hover and self.state == "recording" and (self._devices or self._hover_mic):
+            if self._hover_mic:
+                lines = [("Unmute your mic" if self.muted else "Mute your mic in this meeting", self.TEXT),
+                         ("The other side keeps recording.", self.MUTED)]
+            else:
+                mic, speaker, hint = self._devices
+                lines = [(f"Me: {mic or 'unknown'}", self.MUTED),
+                         (f"Others: {speaker or 'unknown'}", self.MUTED)]
+                if hint:
+                    lines.append((hint, self.AMBER))
             note_w = max(self._measure(text, small) for text, _ in lines) + 2 * self.PAD
             note_h = 12 + 18 * len(lines)
         else:
@@ -270,7 +296,8 @@ class MeetingChip:
         h = self.H + (self.NOTE_GAP + note_h if note_h else 0)
         dx = total_w - w  # The chip hugs the right edge; the panel may be wider
 
-        top = self._background(w, self.H, self.RADIUS, border, icon, divider)
+        mic = (mic_x, self.muted) if self.state == "recording" else None
+        top = self._background(w, self.H, self.RADIUS, border, icon, divider, mic)
         if note_h:
             from PIL import Image
             full = Image.new("RGB", (total_w, h), TRANSPARENT_RGB)
@@ -287,6 +314,8 @@ class MeetingChip:
         if self.state == "recording":
             c.create_text(dx + self.TEXT_X, mid, text=clock(self._elapsed), fill=self.TEXT, font=bold, anchor="w")
             self._hits.append((dx, 0, dx + self.BTN_CX + 16, self.H, self._stop))
+            self._mic_box = (dx + mic_x - 4, 0, dx + mic_x + self.MIC_D + 4, self.H)
+            self._hits.append((*self._mic_box, self._toggle_mute))
             for kind, value, rest, x, width in placed:
                 x += dx
                 if kind == "label":
@@ -328,6 +357,7 @@ class MeetingChip:
     def _set_hover(self, hover):
         if not hover:
             self._canvas.configure(cursor="")
+            self._hover_mic = False
         if hover != self._hover:
             self._hover = hover
             if self.state == "recording":
@@ -351,6 +381,11 @@ class MeetingChip:
 
     def _on_motion(self, event):
         self._canvas.configure(cursor="hand2" if self._hit(event) else "fleur")
+        box = self._mic_box
+        over = bool(box) and self.state == "recording" and box[0] <= event.x <= box[2] and event.y <= self.H
+        if over != self._hover_mic:
+            self._hover_mic = over
+            self._draw()
 
     def _on_press(self, event):
         callback = self._hit(event)
@@ -375,6 +410,12 @@ class MeetingChip:
     def _stop(self):
         if self._on_stop:
             self._on_stop()
+
+    def _toggle_mute(self):
+        self.muted = not self.muted
+        if self._on_mute:
+            self._on_mute(self.muted)
+        self._draw()
 
     def _open(self):
         self.hide()

@@ -34,6 +34,8 @@ STATUSES = ("recording", "transcribing", "done", "failed", "interrupted")
 SILENCE_RMS = 0.003      # Below this, a 100 ms block counts as silent
 HEARD_FRACTION = 0.01    # Others counts as heard when 1% of its blocks have sound
 UTTERANCE_GAP = 1.5      # Seconds of silence that end a transcript line
+DICTATION_MARGIN = 0.3   # Seconds of mic left out before and after a dictation take
+MUTE_MARKER_SECONDS = 5  # A manual mute at least this long is marked in the transcript
 
 
 # -- Audio files --------------------------------------------------------------
@@ -181,14 +183,77 @@ class Level:
         return self.heard / self.blocks if self.blocks else 0.0
 
 
+class Mutes:
+    """When the meeting's mic is left out: manual mutes, and dictation takes with a margin.
+    Times are time.monotonic(). Safe to call from the audio callback and the UI thread."""
+
+    def __init__(self, dictating=lambda: False, margin=DICTATION_MARGIN):
+        self._dictating, self.margin = dictating, margin
+        self._lock = threading.Lock()
+        self._manual = []     # [start, end or None]
+        self._dictation = []  # [start, end or None]
+
+    @property
+    def manual(self):
+        with self._lock:
+            return bool(self._manual) and self._manual[-1][1] is None
+
+    def set_manual(self, on, now=None):
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            open_span = bool(self._manual) and self._manual[-1][1] is None
+            if on and not open_span:
+                self._manual.append([now, None])
+            elif not on and open_span:
+                self._manual[-1][1] = now
+
+    def sample(self, now):
+        """Called per audio block with its capture start: note when dictation starts and stops."""
+        try:
+            dictating = bool(self._dictating())
+        except Exception:
+            dictating = False
+        with self._lock:
+            open_span = bool(self._dictation) and self._dictation[-1][1] is None
+            if dictating and not open_span:
+                self._dictation.append([now, None])
+            elif not dictating and open_span:
+                self._dictation[-1][1] = now
+
+    def covers(self, start, end):
+        """True when audio captured between start and end is left out."""
+        inf = float("inf")
+        with self._lock:
+            for a, b in self._manual:
+                if start < (inf if b is None else b) and end > a:
+                    return True
+            m = self.margin
+            for a, b in self._dictation:
+                if start < (inf if b is None else b + m) and end > a - m:
+                    return True
+        return False
+
+    def manual_spans(self, origin, until):
+        """Manual mutes as [start, end] seconds from origin; an open one ends at until."""
+        with self._lock:
+            return [[round(a - origin, 1), round((until if b is None else b) - origin, 1)]
+                    for a, b in self._manual]
+
+
 class MicCapture:
-    """The microphone dictation uses, through sounddevice at 16 kHz."""
+    """The microphone dictation uses, through sounddevice at 16 kHz.
+
+    Audio is held back DICTATION_MARGIN seconds before it is written, so a
+    dictation take also leaves out the moment just before it started.
+    Left-out audio is written as silence, keeping the track in step with the clock.
+    """
 
     SILENT_SECONDS = 5  # Exact zeros this long means the mic delivers nothing
     REPORT_SECONDS = 60  # How often the log compares recorded audio with the clock
 
-    def __init__(self, track, device=None, log=print):
+    def __init__(self, track, device=None, log=print, mutes=None):
         self.track, self.level, self._log = track, Level(), log
+        self.mutes = mutes or Mutes()
         self._device = device
         self._last_sound = None
         self._blocks = []
@@ -205,15 +270,8 @@ class MicCapture:
         from dictation_engine import _wasapi_convert, sound_mapper
         device = self._device if self._device is not None else sound_mapper("Input")
 
-        def callback(indata, frames, time_info, status):
-            with self._lock:
-                self._blocks.append(indata[:, 0].copy())
-                if status:
-                    key = str(status)
-                    self._flags[key] = self._flags.get(key, 0) + 1
-
         self._stream = sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=1600,
-                                      callback=callback, device=device,
+                                      callback=self._on_audio, device=device,
                                       extra_settings=_wasapi_convert(sd, device))
         self._stream.start()
         self._started = time.monotonic()
@@ -230,6 +288,16 @@ class MicCapture:
         self._last_sound = time.monotonic()
         self._writer.start()
 
+    def _on_audio(self, indata, frames, time_info, status, now=None):
+        now = time.monotonic() if now is None else now
+        start = now - frames / RATE
+        self.mutes.sample(start)
+        with self._lock:
+            self._blocks.append((start, now, indata[:, 0].copy()))
+            if status:
+                key = str(status)
+                self._flags[key] = self._flags.get(key, 0) + 1
+
     @property
     def silent(self):
         """True when the mic has sent only exact zeros (or nothing) for SILENT_SECONDS.
@@ -238,12 +306,12 @@ class MicCapture:
 
     def _drain(self):
         next_report = time.monotonic() + self.REPORT_SECONDS
-        while not self._stop.wait(0.2):
+        while not self._stop.wait(0.1):
             self._flush()
             if time.monotonic() >= next_report:
                 next_report += self.REPORT_SECONDS
                 self._report()
-        self._flush()
+        self._flush(final=True)
         self._report()
 
     def _report(self):
@@ -254,18 +322,24 @@ class MicCapture:
         elapsed = time.monotonic() - self._started
         with self._lock:
             flags = dict(self._flags)
-        recorded = self.track.seconds
+            held = sum(len(block) for _, _, block in self._blocks) / RATE
+        recorded = self.track.seconds + held
         self._log(f"Meeting: mic recorded {recorded:.1f}s of {elapsed:.1f}s "
                   f"(behind {elapsed - recorded:.2f}s)" + (f", flags {flags}" if flags else ""))
 
-    def _flush(self):
+    def _flush(self, final=False, now=None):
+        """Write blocks old enough that a dictation take starting now can't reach back over them."""
+        cutoff = (time.monotonic() if now is None else now) - self.mutes.margin
         with self._lock:
-            blocks, self._blocks = self._blocks, []
-        for block in blocks:
+            count = len(self._blocks) if final else sum(1 for b in self._blocks if b[1] <= cutoff)
+            ready, self._blocks = self._blocks[:count], self._blocks[count:]
+        for start, end, block in ready:
+            if block.any():
+                self._last_sound = time.monotonic()  # A muted mic still counts as working
+            if self.mutes.covers(start, end):
+                block = np.zeros_like(block)
             self.level.add(block)
             self.track.append(block)
-            if block.any():
-                self._last_sound = time.monotonic()
 
     def stop(self):
         if self._stream:
@@ -520,17 +594,22 @@ def clock(seconds):
 
 def render_transcript(meta, mic_words, others_words, others_heard):
     """Markdown transcript. Without sound on the output track (an in-person
-    meeting), everyone is on the mic, so it isn't labeled as you."""
+    meeting), everyone is on the mic, so it isn't labeled as you. A long manual
+    mute gets a marker line, so the gap doesn't look like lost audio."""
     me = "Me" if others_heard else "Speaker"
-    lines = sorted(utterances(mic_words, me) + utterances(others_words, "Others"),
+    mutes = [{"start": a, "muted": b - a} for a, b in meta.get("muted", []) if b - a >= MUTE_MARKER_SECONDS]
+    lines = sorted(utterances(mic_words, me) + utterances(others_words, "Others") + mutes,
                    key=lambda line: line["start"])
     started = datetime.fromisoformat(meta["started"])
     out = [f"# {meta['title']}", "",
            f"{started:%Y-%m-%d %H:%M} · {clock(meta.get('duration_seconds', 0))}", ""]
     for line in lines:
-        out.append(f"**[{clock(line['start'])}] {line['speaker']}:** {' '.join(line['words'])}")
+        if "muted" in line:
+            out.append(f"_[{clock(line['start'])}] {me} muted for {clock(line['muted'])}_")
+        else:
+            out.append(f"**[{clock(line['start'])}] {line['speaker']}:** {' '.join(line['words'])}")
         out.append("")
-    if not lines:
+    if not any("words" in line for line in lines):
         out.append("_No speech was recognized._")
         out.append("")
     return "\n".join(out)
@@ -557,7 +636,14 @@ def write_meta(folder, meta):
     path = Path(folder) / "meta.json"
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    for attempt in range(5):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:  # Windows: a virus scanner or indexer briefly holds the file
+            if attempt == 4:
+                raise
+            time.sleep(0.05)
 
 
 def unfinished(root, skip=None):
@@ -655,7 +741,7 @@ class MeetingSession:
 
     def __init__(self, root, get_model, busy, mic_device=None, language="en", log=print,
                  on_done=lambda folder, ok: None, mic_factory=MicCapture, output_factory=OutputCapture,
-                 clock_now=datetime.now):
+                 clock_now=datetime.now, dictating=lambda: False):
         self.started = clock_now().replace(microsecond=0)
         self.folder = new_folder(root, self.started)
         self._log, self._on_done = log, on_done
@@ -665,7 +751,8 @@ class MeetingSession:
         write_meta(self.folder, self.meta)
         self.mic_track = WavTrack(self.folder / "mic.wav")
         self.others_track = WavTrack(self.folder / "others.wav")
-        self.mic = mic_factory(self.mic_track, mic_device, log)
+        self.mutes = Mutes(dictating)
+        self.mic = mic_factory(self.mic_track, mic_device, log, mutes=self.mutes)
         self.output = output_factory(self.others_track, log)
         self._t0 = None
         self._closing = threading.Event()
@@ -693,10 +780,31 @@ class MeetingSession:
         return mic, speaker, hint
 
     @property
+    def muted(self):
+        return self.mutes.manual
+
+    def set_muted(self, on):
+        """Leave the mic out of the meeting, or bring it back. The other side keeps recording."""
+        if bool(on) == self.muted or self._t0 is None:
+            return
+        self.mutes.set_manual(on)
+        self._save_mutes()
+        self._log(f"Meeting: mic {'muted' if on else 'unmuted'}")
+
+    def _save_mutes(self, until=None):
+        origin = getattr(self.mic, "_started", None) or self._t0
+        spans = self.mutes.manual_spans(origin, until or time.monotonic())
+        if spans:
+            self.meta["muted"] = spans
+            write_meta(self.folder, self.meta)
+
+    @property
     def problem(self):
         """A short message for the chip, or None."""
         if getattr(self.output, "lost", False):
             return "Not recording the other side"
+        if self.muted:
+            return None
         return "No sound from your mic" if getattr(self.mic, "silent", False) else None
 
     def start(self):
@@ -715,8 +823,11 @@ class MeetingSession:
         self._live_thread.start()
 
     def _stop_capture(self):
+        stopped = time.monotonic()
         self.mic.stop()
         self.output.stop()
+        if self._t0 is not None:
+            self._save_mutes(until=stopped)
         self.meta.update(duration_seconds=round(max(self.mic_track.seconds, self.others_track.seconds), 1),
                          output_devices=list(getattr(self.output, "devices", [])))
 
@@ -904,7 +1015,7 @@ def same_folder(a, b):
     try:
         return Path(a).resolve() == Path(b).resolve()
     except OSError:
-        return str(a).rstrip("\/").lower() == str(b).rstrip("\/").lower()
+        return str(a).rstrip("\\/").lower() == str(b).rstrip("\\/").lower()
 
 
 def move_meetings(source, dest, skip=lambda folder: False):
