@@ -18,6 +18,23 @@ STATUS_TEXT = {
 }
 
 
+# Speaker colors (light, dark), in order of who speaks first; Me uses the accent.
+SPEAKER_COLORS = (("#B4541A", "#F0A35E"), ("#2E7D4F", "#7FD39B"), ("#8A3FA8", "#CB9AF0"),
+                  ("#A23B5A", "#F28DAA"), ("#1F7A8C", "#7AD0E0"), ("#7A6A12", "#E3CF6A"))
+
+
+def speaker_colors(speakers):
+    """{label: color pair} for [(label, name)]: Me the accent, the rest from SPEAKER_COLORS."""
+    colors, n = {}, 0
+    for label, _name in speakers:
+        if label == "Me":
+            colors[label] = theme.ACCENT
+        else:
+            colors[label] = SPEAKER_COLORS[n % len(SPEAKER_COLORS)]
+            n += 1
+    return colors
+
+
 MENU_PATH_WIDTH = 340  # The Folder popover's path line, in unscaled px
 PROGRESS_MS = 700      # How often a transcript or speaker progress line updates
 
@@ -134,8 +151,15 @@ class MeetingsPage:
         if pending:
             pending()
 
-    def render(self):
-        """Rebuild whichever view is showing, e.g. after a meeting finishes."""
+    def render(self, keep_scroll=False):
+        """Rebuild whichever view is showing, e.g. after a meeting finishes.
+        keep_scroll: stay where the reader was (after naming a speaker), once lines are drawn."""
+        self._scroll_to = None
+        if keep_scroll:
+            try:
+                self._scroll_to = self._page._parent_canvas.yview()[0]
+            except Exception:
+                pass
         self.save_pending()
         if self._detail is not None and not (self._detail / "meta.json").exists():
             self._detail = None  # Deleted outside the app
@@ -654,7 +678,16 @@ class MeetingsPage:
             _wrap(note, page, 40)
         if not text:
             return
-        lines = meetings.transcript_lines(text)
+        rows = meetings.speaker_rows(folder) if item["status"] == "done" else None
+        if rows is not None:
+            # Lines from the saved word times, so a speaker can be named or a line moved (#44).
+            editable = not busy
+            lines = [(meetings.clock(r["start"]), r["name"], r["text"], r if editable else None) for r in rows]
+            colors = speaker_colors(meetings.speakers_in(rows))
+            color_of = lambda row_line: colors.get(row_line[3]["label"]) if row_line[3] else None
+        else:
+            lines = [(*line, None) for line in meetings.transcript_lines(text)]
+            colors, color_of = {}, lambda _line: None
         if not lines:
             ctk.CTkLabel(page, text="No speech was recognized.", text_color=theme.MUTED).pack(anchor="w", padx=20)
             return
@@ -662,7 +695,8 @@ class MeetingsPage:
         preview.pack(fill="x", padx=20, pady=(0, 16))
         preview.grid_columnconfigure(2, weight=1)
         fonts = (ctk.CTkFont(size=13), ctk.CTkFont(size=14, weight="bold"), ctk.CTkFont(size=15))
-        self._draw_lines(preview, lines, 0, fonts)
+        self._rows, self._colors = rows or [], colors
+        self._draw_lines(preview, lines, 0, fonts, folder, color_of)
 
     @staticmethod
     def _body_wrap(preview):
@@ -670,25 +704,35 @@ class MeetingsPage:
         width = preview.winfo_width()
         return 360 if width <= 1 else max(100, width / preview._get_widget_scaling() - 150)
 
-    def _draw_lines(self, preview, lines, start, fonts):
-        """The whole transcript, a batch at a time; stops if the page was redrawn meanwhile."""
+    def _draw_lines(self, preview, lines, start, fonts, folder=None, color_of=lambda _line: None):
+        """The whole transcript, a batch at a time; stops if the page was redrawn meanwhile.
+        lines: (time, speaker, text, row) where row (from speaker_rows) makes the speaker a
+        menu for naming and moving; None leaves it plain."""
         if not preview.winfo_exists():
             return
         stamp_font, speaker_font, body_font = fonts
         end = min(len(lines), start + LINES_PER_BATCH)
         for row in range(start, end):
-            stamp, speaker, said = lines[row]
+            stamp, speaker, said, data = lines[row]
             ctk.CTkLabel(preview, text=stamp, text_color=theme.MUTED, font=stamp_font,
                          anchor="nw").grid(row=row, column=0, sticky="nw", padx=(0, 10), pady=(0, 10))
-            ctk.CTkLabel(preview, text=speaker, anchor="nw", font=speaker_font,
-                         text_color=theme.ACCENT if speaker == "Me" else theme.MUTED,
-                         ).grid(row=row, column=1, sticky="nw", padx=(0, 10), pady=(0, 10))
+            color = color_of(lines[row]) or (theme.ACCENT if speaker == "Me" else theme.MUTED)
+            who = ctk.CTkLabel(preview, text=speaker + (" ▾" if data else ""), anchor="nw",
+                               font=speaker_font, text_color=color)
+            who.grid(row=row, column=1, sticky="nw", padx=(0, 10), pady=(0, 10))
+            if data:
+                who.configure(cursor="hand2")
+                who.bind("<Button-1>", lambda _e, w=who, d=data: self._speaker_menu(w, folder, d))
             body = ctk.CTkLabel(preview, text=said, text_color=theme.TEXT, justify="left", anchor="nw",
                                 font=body_font, wraplength=self._body_wrap(preview))
             body.grid(row=row, column=2, sticky="new", pady=(0, 10))
             _wrap(body, preview, 150)
         if end < len(lines):
-            preview.after(1, lambda: self._draw_lines(preview, lines, end, fonts))
+            preview.after(1, lambda: self._draw_lines(preview, lines, end, fonts, folder, color_of))
+        elif getattr(self, "_scroll_to", None) is not None:
+            preview.update_idletasks()
+            self._page._parent_canvas.yview_moveto(self._scroll_to)
+            self._scroll_to = None
 
     def _rename(self, folder, title, item):
         title = " ".join(title.split())
@@ -716,9 +760,165 @@ class MeetingsPage:
         button.after(1200, lambda: button.configure(text="Copy as Markdown") if button.winfo_exists() else None)
 
     def _retranscribe(self, folder):
-        if self._provider:
-            self._provider.retranscribe_meeting(folder)
-        self.render()
+        def go():
+            if self._provider:
+                self._provider.retranscribe_meeting(folder)
+            if self._page.winfo_exists():
+                self.render()
+        if meetings.has_speaker_edits(folder):
+            from ui.dialogs import confirm
+            confirm(self._root, "Re-transcribe",
+                    "Re-transcribing finds the speakers again. The names you gave them (except yours) "
+                    "and any lines you moved are lost.", "Re-transcribe", "Cancel", go)
+            return
+        go()
+
+    # -- Speaker menu (#44) -----------------------------------------------------
+
+    def _speaker_menu(self, anchor, folder, row):
+        """A popover under a line's speaker: search or add a speaker, rename this one
+        (every line), move this line to another, or move all of this speaker's lines."""
+        import tkinter as tk
+        self._close_menu()
+        win = tk.Toplevel(self._outer)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        self._menu = win
+        win.configure(bg=theme.color(theme.BORDER), highlightthickness=0)
+        frame = ctk.CTkFrame(win, fg_color=theme.SURFACE, border_width=0, corner_radius=0)
+        frame.pack(fill="both", expand=True, padx=1, pady=1)
+        speakers = meetings.speakers_in(self._rows)
+        names = dict(speakers)
+        current = row["label"]
+        state = {"rename": False, "open": None}
+        title = ctk.CTkLabel(frame, text="Move this line, or rename", text_color=theme.MUTED, anchor="w",
+                             font=ctk.CTkFont(size=12))
+        title.pack(fill="x", padx=12, pady=(10, 4))
+        entry = ctk.CTkEntry(frame, width=260, height=32, placeholder_text="Search or add a speaker",
+                             fg_color=theme.FIELD, border_color=theme.BORDER, text_color=theme.TEXT)
+        entry.pack(fill="x", padx=10, pady=(0, 6))
+        listing = ctk.CTkFrame(frame, fg_color="transparent")
+        listing.pack(fill="x", padx=6, pady=(0, 8))
+        item_font = ctk.CTkFont(size=14)
+
+        def done(change):
+            self._close_menu()
+            try:
+                change()
+            except (OSError, ValueError, KeyError) as error:
+                self._status(f"Couldn't change the speaker ({type(error).__name__})", "#FF453A")
+                return
+            self.render(keep_scroll=True)
+
+        def remember_me(label, name):
+            if label == "Me" and self._provider and hasattr(self._provider, "set_meeting_my_name"):
+                self._provider.set_meeting_my_name(name)
+
+        def rename(name):
+            name = " ".join(name.split())
+            if not name or name == names.get(current):
+                self._close_menu()
+                return
+            other = meetings.speaker_named(folder, name, besides=current)
+            if other is None:
+                done(lambda: meetings.name_speaker(folder, current, name))
+                remember_me(current, name)
+                return
+            merge_into(other, f"\u201c{names.get(other, other)}\u201d is already a speaker. ")
+
+        def merge_into(other, why=""):
+            """Every line by this speaker goes to other, after a yes: it can't be undone in one step."""
+            self._close_menu()
+            from ui.dialogs import confirm
+            confirm(self._root, "Merge speakers",
+                    f"{why}Put every line by \u201c{names.get(current, current)}\u201d under "
+                    f"\u201c{names.get(other, other)}\u201d?",
+                    "Merge", "Cancel", lambda: done(lambda: meetings.merge_speakers(folder, current, other)))
+
+        def move_to(label):
+            done(lambda: meetings.move_line(folder, row["track"], row["first"], row["last"], label))
+
+        def add(name):
+            def change():
+                label = meetings.add_speaker(folder, name)
+                meetings.move_line(folder, row["track"], row["first"], row["last"], label)
+            done(change)
+
+        def start_rename():
+            state["rename"] = True
+            title.configure(text=f"Rename \u201c{names.get(current, current)}\u201d on every line")
+            entry.delete(0, "end")
+            entry.insert(0, names.get(current, current))
+            entry.select_range(0, "end")
+            entry.focus_set()
+            fill()
+
+        def fill(_event=None):
+            for child in listing.winfo_children():
+                child.destroy()
+            if state["rename"]:
+                ctk.CTkLabel(listing, text="Enter to save. A name another speaker has merges the two.",
+                             text_color=theme.MUTED, font=ctk.CTkFont(size=12), anchor="w",
+                             justify="left", wraplength=250).pack(fill="x", padx=6)
+                return
+            query = " ".join(entry.get().split())
+            shown = [(label, name) for label, name in speakers if query.casefold() in name.casefold()]
+            if query and not any(name.casefold() == query.casefold() for _, name in speakers):
+                ctk.CTkButton(listing, text=f"Add \u201c{query}\u201d", anchor="w", height=30, corner_radius=6,
+                              fg_color="transparent", hover_color=theme.SELECTED, text_color=theme.ACCENT,
+                              font=item_font, command=lambda q=query: add(q)).pack(fill="x", pady=1)
+            for label, name in shown:
+                line = ctk.CTkFrame(listing, fg_color="transparent")
+                line.pack(fill="x", pady=1)
+                pick = ctk.CTkButton(line, text=f"\u25cf  {name}", anchor="w", height=30, corner_radius=6,
+                                     fg_color=theme.SELECTED if label == current else "transparent",
+                                     hover_color=theme.SELECTED, font=item_font,
+                                     text_color=self._colors.get(label, theme.TEXT),
+                                     command=(start_rename if label == current else lambda l=label: move_to(l)))
+                pick.pack(side="left", fill="x", expand=True)
+                if label == current:
+                    ctk.CTkButton(line, text="\u270e", width=30, height=30, corner_radius=6,
+                                  fg_color="transparent", hover_color=theme.SELECTED, text_color=theme.MUTED,
+                                  font=item_font, command=start_rename).pack(side="right")
+                    continue
+                ctk.CTkButton(line, text="\u203a", width=30, height=30, corner_radius=6,
+                              fg_color="transparent", hover_color=theme.SELECTED, text_color=theme.MUTED,
+                              font=item_font,
+                              command=lambda l=label: (state.__setitem__("open", None if state["open"] == l else l),
+                                                       fill())).pack(side="right")
+                if state["open"] == label:
+                    options = ctk.CTkFrame(listing, fg_color="transparent")
+                    options.pack(fill="x", padx=(22, 0))
+                    for text, command in (("Just this line", lambda l=label: move_to(l)),
+                                          (f"All of {names.get(current, current)}\u2019s lines",
+                                           lambda l=label: merge_into(l))):
+                        ctk.CTkButton(options, text=text, anchor="w", height=28, corner_radius=6,
+                                      fg_color="transparent", hover_color=theme.SELECTED, text_color=theme.TEXT,
+                                      font=ctk.CTkFont(size=13), command=command).pack(fill="x")
+            win.update_idletasks()
+            win.geometry(f"{win.winfo_reqwidth()}x{win.winfo_reqheight()}")
+
+        def enter(_event=None):
+            text = " ".join(entry.get().split())
+            if state["rename"]:
+                rename(text)
+                return
+            if not text:
+                return
+            match = next((label for label, name in speakers if name.casefold() == text.casefold()), None)
+            move_to(match) if match else add(text)
+
+        entry.bind("<KeyRelease>", lambda e: None if e.keysym in ("Return", "Escape") or state["rename"] else fill())
+        entry.bind("<Return>", enter)
+        fill()
+        win.update_idletasks()
+        x = anchor.winfo_rootx()
+        y = anchor.winfo_rooty() + anchor.winfo_height() + 2
+        win.geometry(f"{win.winfo_reqwidth()}x{win.winfo_reqheight()}+{max(0, x)}+{y}")
+        win.bind("<Escape>", lambda _e: self._close_menu())
+        win.bind("<FocusOut>", lambda _e: win.after(150, self._close_if_unfocused))
+        win.focus_force()
+        entry.focus_set()
 
     def _delete(self, folder, item):
         from ui.dialogs import confirm

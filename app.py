@@ -620,6 +620,13 @@ class GUIApp:
         if self._retranscribing:
             self._retranscribing.discard(Path(folder))
         if ok:
+            my_name = self._config.get("meeting_my_name", "")
+            if my_name:
+                from meetings import set_my_name
+                try:
+                    set_my_name(folder, my_name)
+                except (OSError, ValueError, KeyError) as error:
+                    log(f"Meeting: could not put your name on the transcript ({type(error).__name__})")
             self._find_speakers_later(folder)
         self._refresh_meetings()
         if self._meeting and self._meeting.folder == folder and self._chip.state == "finishing":
@@ -651,6 +658,18 @@ class GUIApp:
     def _refresh_meetings(self):
         if self._settings_win:
             self._settings_win.refresh_meetings()
+
+    def set_meeting_my_name(self, name):
+        """Remember the name given to Me, for the meetings that follow (#44)."""
+        name = " ".join(str(name).split())[:60]
+        if name == "Me":
+            name = ""
+        if self._config.get("meeting_my_name", "") == name:
+            return
+        self._config["meeting_my_name"] = name
+        if self._settings_win:  # It keeps its own copy; Apply would otherwise put the old one back
+            self._settings_win._config["meeting_my_name"] = name
+        self._save_quietly()
 
     def meeting_in_use(self, folder):
         """True while a meeting is being recorded or transcribed into folder."""

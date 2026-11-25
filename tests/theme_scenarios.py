@@ -510,3 +510,59 @@ def test_finding_speakers_shows_a_spinner_over_a_still_bar(root, tmp_path):
     assert bar.spinner.widget.winfo_manager() == "" and bar.percent.cget("text") == "40%"
     page._stop_progress()
     window._win.destroy()
+
+
+def test_speaker_menu_adds_moves_and_renames(root, tmp_path):
+    import meetings
+    from audio_chunks import TimedWord
+    folder = tmp_path / "2026-11-25 1030"
+    folder.mkdir()
+    meetings.write_meta(folder, {"title": "Call", "started": "2026-11-25T10:30:00",
+                                 "duration_seconds": 60, "status": "done"})
+    mic = [TimedWord("hi", 0.0), TimedWord("there", 0.4)]
+    others = [TimedWord("hello", 5.0), TimedWord("yeah", 30.0)]
+    meetings.write_words(folder, mic, others, True)
+    meetings.rebuild_transcript(folder)
+
+    class Names(FakeMeetings):
+        my_name = None
+
+        def set_meeting_my_name(self, name):
+            self.my_name = name
+
+    provider = Names()
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=provider)
+    window.show("Meetings")
+    page = window._meetings_page
+    page.show_detail(folder)
+    root.update()
+    assert "Others \u25be" in page_texts(window._pages["Meetings"])
+
+    def menu_for(text):
+        row = next(r for r in page._rows if r["text"] == text)
+        page._speaker_menu(page._page, folder, row)
+        root.update()
+        entry = next(w for w in all_widgets(page._menu) if isinstance(w, ctk.CTkEntry))
+        return entry
+
+    # Type a new name: adds the speaker and moves just this line.
+    entry = menu_for("yeah")
+    entry.insert(0, "Paul")
+    entry._entry.event_generate("<Return>")
+    root.update()
+    lines = meetings.transcript_lines(meetings.read_transcript(folder))
+    assert [(s, t) for _, s, t in lines] == [("Me", "hi there"), ("Others", "hello"), ("Paul", "yeah")]
+    # The pencil on the current speaker renames it on every line.
+    entry = menu_for("hi there")
+    pencil = next(w for w in all_widgets(page._menu) if isinstance(w, ctk.CTkButton) and w.cget("text") == "\u270e")
+    pencil.invoke()
+    root.update()
+    assert entry.get() == "Me"
+    entry.delete(0, "end")
+    entry.insert(0, "Scott")
+    entry._entry.event_generate("<Return>")
+    root.update()
+    lines = meetings.transcript_lines(meetings.read_transcript(folder))
+    assert lines[0][1] == "Scott" and provider.my_name == "Scott"
+    page._close_menu()
+    window._win.destroy()

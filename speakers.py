@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 import speaker_models
-from meetings import RATE, read_meta, read_words, render_transcript, write_meta
+from meetings import RATE, read_meta, read_speakers, read_words, rebuild_transcript, write_meta, write_speakers
 
 # Settings from the #44 spike: 9 of 9 voices on two panel recordings.
 CLUSTER_THRESHOLD = 1.0
@@ -257,11 +257,14 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
         _progress.pop(folder, None)
         _started.pop(folder, None)
     count = len({i for i in ids if i is not None})
-    meta = read_meta(folder)
     if count > 1:
-        text = render_transcript(meta, mic_words, others_words, heard, labels={track: number(ids)})
-        (folder / "transcript.md").write_text(text, encoding="utf-8")
+        # Fresh labels; names other than Me's belonged to the old ones.
+        names = read_speakers(folder)["names"]
+        write_speakers(folder, {"labels": {track: number(ids)},
+                                "names": {"Me": names["Me"]} if "Me" in names else {}})
+        rebuild_transcript(folder)
     # One voice: the transcript's Others / Speaker label already says it.
+    meta = read_meta(folder)
     meta["speakers"] = {"status": "done", "count": count, "track": track}
     write_meta(folder, meta)
     log(f"Meeting: found {count} speaker(s) in {folder.name} "
