@@ -37,6 +37,20 @@ def speaker_colors(speakers):
 
 MENU_PATH_WIDTH = 340  # The Folder popover's path line, in unscaled px
 PROGRESS_MS = 700      # How often a transcript or speaker progress line updates
+PLAY_TICK_MS = 150     # How often the player bar and the playing line update
+EXPORT_POLL_MS = 300   # How often "Saving… N%" updates
+
+
+def clock_seconds(stamp):
+    """Seconds for a transcript time such as 05:03 or 1:02:03; None if it isn't one."""
+    try:
+        parts = [int(p) for p in str(stamp).split(":")]
+    except ValueError:
+        return None
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + part
+    return seconds
 
 
 def progress_text(progress):
@@ -143,6 +157,12 @@ class MeetingsPage:
         self._pending = None  # Saves a title being typed when the view changes underneath it
         self._live = []       # (folder, label, parts, bar) lines showing progress
         self._progress_id = None
+        self._player = None   # playback.Player for the meeting shown, created on first play (#63)
+        self._controls = None  # The player bar's widgets while it is on the page
+        self._line_widgets = []  # (start seconds, stamp label, body label) of each drawn line
+        self._lit = None      # Index in _line_widgets of the line being played
+        self._play_id = None
+        self._export = None   # {"folder", "fraction", "done", "error"} while audio is being saved
 
     # -- Shared ---------------------------------------------------------------
 
@@ -165,8 +185,11 @@ class MeetingsPage:
         self.save_pending()
         if self._detail is not None and not (self._detail / "meta.json").exists():
             self._detail = None  # Deleted outside the app
+        if self._player is not None and self._player.folder != self._detail:
+            self._close_player()  # Left the meeting
         for child in self._page.winfo_children():
             child.destroy()
+        self._controls, self._line_widgets, self._lit = None, [], None
         self._results = None
         self._stop_progress()
         if self._detail is None:
@@ -656,8 +679,13 @@ class MeetingsPage:
         has_audio = meetings.has_audio(folder)
         self._button(actions, "Re-transcribe", lambda: self._retranscribe(folder), primary=restart,
                      state="disabled" if busy or not has_audio or not self._provider else "normal")
+        # Playable once recorded, and not while the audio is being replaced by its Opus copy.
+        playable = has_audio and item["status"] not in ("recording",) and not (
+            progress and progress[0] == "compressing")
         self._button(actions, "Delete", lambda: self._delete(folder, item),
                      state="disabled" if busy else "normal")
+        if playable:
+            self._render_player(page, folder, item)
         ctk.CTkFrame(page, height=1, fg_color=theme.BORDER).pack(fill="x", padx=20, pady=(8, 12))
 
         message = {
@@ -684,11 +712,12 @@ class MeetingsPage:
         if rows is not None:
             # Lines from the saved word times, so a speaker can be named or a line moved (#44).
             editable = not busy
-            lines = [(meetings.clock(r["start"]), r["name"], r["text"], r if editable else None) for r in rows]
+            lines = [(meetings.clock(r["start"]), r["name"], r["text"], r if editable else None, r["start"])
+                     for r in rows]
             colors = speaker_colors(meetings.speakers_in(rows))
             color_of = lambda row_line: colors.get(row_line[3]["label"]) if row_line[3] else None
         else:
-            lines = [(*line, None) for line in meetings.transcript_lines(text)]
+            lines = [(*line, None, clock_seconds(line[0])) for line in meetings.transcript_lines(text)]
             colors, color_of = {}, lambda _line: None
         if not lines:
             ctk.CTkLabel(page, text="No speech was recognized.", text_color=theme.MUTED).pack(anchor="w", padx=20)
@@ -708,16 +737,17 @@ class MeetingsPage:
 
     def _draw_lines(self, preview, lines, start, fonts, folder=None, color_of=lambda _line: None):
         """The whole transcript, a batch at a time; stops if the page was redrawn meanwhile.
-        lines: (time, speaker, text, row) where row (from speaker_rows) makes the speaker a
-        menu for naming and moving; None leaves it plain."""
+        lines: (time, speaker, text, row, start seconds) where row (from speaker_rows) makes
+        the speaker a menu for naming and moving; None leaves it plain. With a player bar on
+        the page, clicking a line's time or words plays from there (#63)."""
         if not preview.winfo_exists():
             return
         stamp_font, speaker_font, body_font = fonts
         end = min(len(lines), start + LINES_PER_BATCH)
         for row in range(start, end):
-            stamp, speaker, said, data = lines[row]
-            ctk.CTkLabel(preview, text=stamp, text_color=theme.MUTED, font=stamp_font,
-                         anchor="nw").grid(row=row, column=0, sticky="nw", padx=(0, 10), pady=(0, 10))
+            stamp, speaker, said, data, seconds = lines[row]
+            stamp_label = ctk.CTkLabel(preview, text=stamp, text_color=theme.MUTED, font=stamp_font, anchor="nw")
+            stamp_label.grid(row=row, column=0, sticky="nw", padx=(0, 10), pady=(0, 10))
             color = color_of(lines[row]) or (theme.ACCENT if speaker == "Me" else theme.MUTED)
             who = ctk.CTkLabel(preview, text=speaker + (" ▾" if data else ""), anchor="nw",
                                font=speaker_font, text_color=color)
@@ -728,9 +758,16 @@ class MeetingsPage:
                 # window when the button came up, and the menu closed itself at once.
                 who.bind("<ButtonRelease-1>", lambda _e, w=who, d=data: self._speaker_menu(w, folder, d))
             body = ctk.CTkLabel(preview, text=said, text_color=theme.TEXT, justify="left", anchor="nw",
-                                font=body_font, wraplength=self._body_wrap(preview))
+                                font=body_font, wraplength=self._body_wrap(preview), padx=6, corner_radius=6)
             body.grid(row=row, column=2, sticky="new", pady=(0, 10))
             _wrap(body, preview, 150)
+            if self._controls is not None and seconds is not None:
+                self._line_widgets.append((seconds, stamp_label, body))
+                for widget in (stamp_label, body):
+                    widget.configure(cursor="hand2")
+                    widget.bind("<ButtonRelease-1>", lambda _e, s=seconds: self._play_from(s))
+        if self._player is not None and (self._player.playing or self._player.position):
+            self._highlight(scroll=False)  # The playing line may be in this batch
         if end < len(lines):
             preview.after(1, lambda: self._draw_lines(preview, lines, end, fonts, folder, color_of))
         elif getattr(self, "_scroll_to", None) is not None:
@@ -758,6 +795,8 @@ class MeetingsPage:
         if self._detail == Path(old):
             self._detail = Path(new)
             self._pending = None
+        if self._player is not None and self._player.folder == Path(old):
+            self._player.folder = Path(new)  # Paused: a rename waits while it plays
         if self._page.winfo_exists():
             self._page.after_idle(lambda: self._page.winfo_exists() and self.render(keep_scroll=True))
 
@@ -787,6 +826,242 @@ class MeetingsPage:
                     "and any lines you moved are lost.", "Re-transcribe", "Cancel", go)
             return
         go()
+
+    # -- Playback (#63) -----------------------------------------------------------
+
+    def _render_player(self, page, folder, item):
+        """The player bar: play or pause, ten seconds back and forward, the position bar,
+        the time, and Save audio. The player itself outlives redraws of the same meeting."""
+        import playback
+        if self._player is None:
+            self._player = playback.Player(folder, on_release=self._released)
+        player = self._player
+        bar = ctk.CTkFrame(page, fg_color="transparent")
+        bar.pack(fill="x", padx=20, pady=(0, 4))
+        play = ctk.CTkButton(bar, text="", width=40, height=30, command=self._toggle_play,
+                             fg_color=theme.ACCENT, hover_color=theme.ACCENT_HOVER, text_color=theme.ON_ACCENT,
+                             font=ctk.CTkFont(size=14))
+        play.pack(side="left", padx=(0, 6))
+        small = dict(width=52, height=30, fg_color=theme.SURFACE, hover_color=theme.SELECTED,
+                     text_color=theme.TEXT, border_color=theme.BORDER, border_width=1, font=ctk.CTkFont(size=12))
+        ctk.CTkButton(bar, text="− 10s", command=lambda: self._skip(-10), **small).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(bar, text="+ 10s", command=lambda: self._skip(10), **small).pack(side="left", padx=(0, 10))
+        saving = self._export is not None and self._export["folder"] == folder
+        save = ctk.CTkButton(bar, text=self._save_text(), command=lambda: self._save_audio(folder, item),
+                             state="disabled" if saving else "normal", **{**small, "width": 0, "font": ctk.CTkFont(size=13)})
+        save.pack(side="right", padx=(12, 0))
+        self._save_button = save
+        time_label = ctk.CTkLabel(bar, text="", text_color=theme.MUTED, font=ctk.CTkFont(size=13), anchor="e")
+        time_label.pack(side="right", padx=(10, 0))
+        slider = ctk.CTkSlider(bar, from_=0, to=max(1.0, player.duration), height=16,
+                               button_color=theme.ACCENT, button_hover_color=theme.ACCENT_HOVER,
+                               progress_color=theme.ACCENT, fg_color=theme.BORDER,
+                               command=self._on_slide)
+        slider.pack(side="left", fill="x", expand=True)
+        slider.bind("<ButtonRelease-1>", lambda _e: self._end_slide(), add="+")
+        self._controls = {"play": play, "slider": slider, "time": time_label, "sliding": False}
+        self._update_controls()
+        if player.playing:
+            self._start_play_tick()
+
+    def _released(self):
+        """The player closed the meeting's files: a folder rename that waited can go ahead."""
+        release = getattr(self._provider, "playback_released", None)
+        if release:
+            self._outer.after_idle(release)
+
+    def _close_player(self):
+        if self._play_id:
+            try:
+                self._outer.after_cancel(self._play_id)
+            except Exception:
+                pass
+            self._play_id = None
+        player, self._player = self._player, None
+        if player is not None:
+            player.close()
+
+    def stop_playback(self):
+        """Pause, keeping the position: the window is leaving the Meetings page."""
+        if self._player is not None:
+            self._player.pause()
+            self._update_controls()
+
+    def close(self):
+        """The window is closing."""
+        self._close_player()
+
+    def _toggle_play(self):
+        player = self._player
+        if player is None:
+            return
+        if not player.playing and self._dictating():
+            self._status("Playback waits while you dictate.", "#FF9F0A")
+            return
+        if not player.toggle():
+            self._status(player.error, "#FF453A")
+        self._update_controls()
+        self._start_play_tick()
+
+    def _play_from(self, seconds):
+        player = self._player
+        if player is None:
+            return
+        player.seek(max(0.0, seconds - 0.3))  # A moment before, so the first word isn't clipped
+        if not player.playing:
+            self._toggle_play()
+        else:
+            self._update_controls()
+
+    def _skip(self, seconds):
+        if self._player is not None:
+            self._player.skip(seconds)
+            self._update_controls()
+
+    def _on_slide(self, value):
+        controls = self._controls
+        if controls is None or self._player is None:
+            return
+        controls["sliding"] = True
+        controls["time"].configure(text=f"{meetings.clock(value)} / {meetings.clock(self._player.duration)}")
+
+    def _end_slide(self):
+        controls = self._controls
+        if controls is None or self._player is None or not controls["sliding"]:
+            return
+        controls["sliding"] = False
+        self._player.seek(controls["slider"].get())
+        self._update_controls()
+
+    def _dictating(self):
+        dictating = getattr(self._provider, "dictating", None)
+        return bool(dictating and dictating())
+
+    def _start_play_tick(self):
+        if self._play_id is None and self._player is not None and self._player.playing:
+            self._play_id = self._outer.after(PLAY_TICK_MS, self._play_tick)
+
+    def _play_tick(self):
+        self._play_id = None
+        player = self._player
+        if player is None:
+            return
+        player.tick()
+        if player.playing and self._dictating():
+            player.pause()  # Dictation pauses other media too; the mic mustn't hear the meeting
+            self._status("Playback paused for dictation.", "gray60")
+        self._update_controls()
+        self._start_play_tick()
+
+    def _update_controls(self):
+        controls, player = self._controls, self._player
+        if controls is None or player is None or not controls["play"].winfo_exists():
+            return
+        controls["play"].configure(text="❚❚" if player.playing else "▶")
+        if not controls["sliding"]:
+            controls["slider"].set(player.position)
+            controls["time"].configure(text=f"{meetings.clock(player.position)} / {meetings.clock(player.duration)}")
+        if player.playing or player.position:
+            self._highlight()
+
+    def _highlight(self, scroll=True):
+        """Mark the line being played, and keep it in view while playing."""
+        import bisect
+        player = self._player
+        if player is None or not self._line_widgets:
+            return
+        starts = [line[0] for line in self._line_widgets]
+        index = bisect.bisect_right(starts, player.position + 0.35) - 1
+        if index == self._lit:
+            return
+        if self._lit is not None and self._lit < len(self._line_widgets):
+            _, stamp, body = self._line_widgets[self._lit]
+            if stamp.winfo_exists():
+                stamp.configure(text_color=theme.MUTED)
+                body.configure(fg_color="transparent")
+        self._lit = index if index >= 0 else None
+        if self._lit is None:
+            return
+        _, stamp, body = self._line_widgets[self._lit]
+        if not stamp.winfo_exists():
+            return
+        stamp.configure(text_color=theme.ACCENT)
+        body.configure(fg_color=theme.SELECTED)
+        if scroll and player.playing:
+            self._scroll_into_view(body)
+
+    def _scroll_into_view(self, widget):
+        """Scroll so widget sits a third of the way down, if it is out of view."""
+        try:
+            canvas = self._page._parent_canvas
+            total = self._page.winfo_height()
+            if total <= 1:
+                return
+            y = widget.winfo_rooty() - self._page.winfo_rooty()
+            top, bottom = canvas.yview()
+            if top * total <= y and y + widget.winfo_height() <= bottom * total:
+                return
+            canvas.yview_moveto(max(0.0, (y - canvas.winfo_height() / 3) / total))
+        except Exception:
+            pass
+
+    # -- Save audio (#63) ---------------------------------------------------------
+
+    def _save_text(self):
+        export = self._export
+        if export is None or export["folder"] != self._detail:
+            return "Save audio…"
+        return f"Saving… {int(export['fraction'] * 100)}%"
+
+    def _save_audio(self, folder, item):
+        """Ask where, then write the meeting as one mixed file (MP3 or Opus) in the background."""
+        import threading
+        from tkinter import filedialog
+
+        import playback
+        if self._export is not None:
+            return
+        downloads = Path.home() / "Downloads"
+        path = filedialog.asksaveasfilename(
+            parent=self._outer.winfo_toplevel(), title="Save the meeting's audio",
+            initialdir=str(downloads if downloads.is_dir() else Path.home()),
+            initialfile=f"{folder.name}.mp3", defaultextension=".mp3",
+            filetypes=[("MP3 audio (plays everywhere)", "*.mp3"), ("Opus audio (smaller)", "*.opus")])
+        if not path:
+            return
+        path = Path(path)
+        if path.suffix.lower() not in (".mp3", ".opus"):
+            path = path.with_suffix(".mp3")
+        state = self._export = {"folder": folder, "fraction": 0.0, "done": False, "error": None}
+
+        def work():
+            try:
+                playback.export(folder, path, report=lambda f: state.__setitem__("fraction", f))
+            except Exception as error:
+                state["error"] = type(error).__name__
+            state["done"] = True
+
+        threading.Thread(target=work, daemon=True, name="meeting-export").start()
+        self._watch_export(path)
+
+    def _watch_export(self, path):
+        state = self._export
+        if state is None:
+            return
+        button = getattr(self, "_save_button", None)
+        if not state["done"]:
+            if button is not None and button.winfo_exists():
+                button.configure(text=self._save_text(), state="disabled")
+            self._outer.after(EXPORT_POLL_MS, lambda: self._watch_export(path))
+            return
+        self._export = None
+        if button is not None and button.winfo_exists():
+            button.configure(text=self._save_text(), state="normal")
+        if state["error"]:
+            self._status(f"Couldn't save the audio ({state['error']})", "#FF453A")
+        else:
+            self._status(f"Audio saved: {path.name}", "#30D158")
+        self._released()
 
     # -- Speaker menu (#44) -----------------------------------------------------
 
@@ -939,6 +1214,8 @@ class MeetingsPage:
         from ui.dialogs import confirm
 
         def go():
+            if self._player is not None and self._player.folder == folder:
+                self._close_player()  # Its files must be closed to move the folder
             if meetings.trash_folder(folder):
                 self._status("Meeting moved to the Recycle Bin.", "#30D158")
                 self._detail = None

@@ -565,6 +565,8 @@ class SettingsWindow:
         name = RENAMED_PAGES.get(name, name)
         if self._meetings_page and self._page == "Meetings":
             self._meetings_page.save_pending()
+            if RENAMED_PAGES.get(name, name) != "Meetings":
+                self._meetings_page.stop_playback()
         if name not in self._pages:
             name = "General"
         for key, page in self._pages.items():
@@ -589,6 +591,7 @@ class SettingsWindow:
     def _close(self):
         if self._meetings_page:
             self._meetings_page.save_pending()
+            self._meetings_page.close()
         self._win.destroy()
 
     def refresh_meetings(self):
