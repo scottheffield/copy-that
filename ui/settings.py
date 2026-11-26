@@ -206,8 +206,12 @@ class SettingsWindow:
             header, text="CopyThat", fg_color="transparent",
             font=ctk.CTkFont(size=14, weight="bold"), text_color=theme.TEXT,
         ).pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(
+            header, text="Dictation and meetings, on your PC", fg_color="transparent",
+            font=ctk.CTkFont(size=12), text_color=theme.MUTED,
+        ).pack(side="left", padx=(12, 0))
 
-        pad = {"padx": 20, "pady": (10, 0)}
+        pad ={"padx": 20, "pady": (10, 0)}
 
         # Shared dropdown styling
         dd_opts = dict(
@@ -262,7 +266,10 @@ class SettingsWindow:
             self._pages["Meetings"], self._root,
             lambda: self._config.get("meetings_dir", str(Path.home() / "CopyThat Meetings")),
             provider=self._meetings, status=self.update_status)
-        ctk.CTkFrame(sidebar, height=1, fg_color=_CARD_BORDER).pack(fill="x", padx=16, pady=6)
+        # A plain Tk frame: a CTkFrame this thin draws nothing. refresh_theme repaints it.
+        self._nav_divider = tk.Frame(sidebar, height=1, bd=0, highlightthickness=0,
+                                     bg=theme.color(_CARD_BORDER))
+        self._nav_divider.pack(fill="x", padx=16, pady=12)
         descriptions = {
             "General": "Make yourself heard. Set up your everyday dictation.",
             "Speech": "Choose how your words become text.",
@@ -603,6 +610,7 @@ class SettingsWindow:
     def refresh_theme(self):
         if self.is_open:
             theme.title_bar(self._win)
+            self._nav_divider.configure(bg=theme.color(_CARD_BORDER))
 
     def _card(self, kind, key, parent, title, summary, variable, value, size_gb=None):
         """Add a model card. Downloadable cards (key set) track download state."""
