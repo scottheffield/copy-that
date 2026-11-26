@@ -192,14 +192,15 @@ class MeetingsPage:
         self._controls, self._line_widgets, self._lit = None, [], None
         self._results = None
         self._stop_progress()
+        # Both views pin a header above the scrolling body: the list's title, Record, and
+        # search; a meeting's title, actions, and player (#63).
+        self._page.pack_forget()  # Re-pack so the header sits above the scrolling body
+        self._header.pack(fill="x")
+        self._page.pack(fill="both", expand=True)
         if self._detail is None:
             self._render_header()
-            self._page.pack_forget()  # Re-pack so the header sits above the scrolling body
-            self._header.pack(fill="x")
-            self._page.pack(fill="both", expand=True)
             self._render_list()
         else:
-            self._header.pack_forget()
             self._render_detail(self._detail)
         try:
             self._page._parent_canvas.yview_moveto(0)
@@ -613,16 +614,19 @@ class MeetingsPage:
         return next((item for item in meetings.list_meetings(folder.parent) if item["folder"] == folder), None)
 
     def _render_detail(self, folder):
-        page = self._page
+        page, head = self._page, self._header
+        for child in head.winfo_children():
+            child.destroy()  # Pinned above the transcript, so the controls stay in view
         item = self._item(folder)
         if item is None:
             self._detail = None
+            self._render_header()
             self._render_list()
             return
-        ctk.CTkButton(page, text="‹  All meetings", command=self.show_list, anchor="w", width=0, height=28,
+        ctk.CTkButton(head, text="‹  All meetings", command=self.show_list, anchor="w", width=0, height=28,
                       fg_color="transparent", hover_color=theme.SELECTED, text_color=theme.ACCENT,
                       font=ctk.CTkFont(size=13)).pack(anchor="w", padx=14, pady=(14, 4))
-        entry = self._title_entry(page, item, 22)
+        entry = self._title_entry(head, item, 22)
         entry.pack(fill="x", padx=20, pady=(4, 0))
         entry.bind("<Return>", lambda _e: page.focus_set())
         entry.bind("<Escape>", lambda _e: (self._restore(entry, item), page.focus_set()))
@@ -640,13 +644,13 @@ class MeetingsPage:
         progress = self._progress(folder)
         if item["status"] in STATUS_TEXT and not (progress and item["status"] == "transcribing"):
             parts.append(STATUS_TEXT[item["status"]])
-        line = ctk.CTkFrame(page, fg_color="transparent")
+        line = ctk.CTkFrame(head, fg_color="transparent")
         line.pack(anchor="w", padx=20, pady=(2, 4 if progress else 12))
         meta_line = ctk.CTkLabel(line, text=" · ".join(parts), text_color=theme.MUTED,
                                  font=ctk.CTkFont(size=13))
         meta_line.pack(side="left")
         if progress is not None:
-            row = ctk.CTkFrame(page, fg_color="transparent")
+            row = ctk.CTkFrame(head, fg_color="transparent")
             row.pack(fill="x", padx=20, pady=(4, 12))
             bar = ctk.CTkProgressBar(row, height=10, corner_radius=5, progress_color=theme.ACCENT,
                                      fg_color=theme.BORDER)
@@ -666,7 +670,7 @@ class MeetingsPage:
             speakers_stopped = False
         # Unfinished work isn't restarted at launch (#66); Re-transcribe is the way on.
         restart = not busy and (item["status"] == "interrupted" or speakers_stopped)
-        actions = ctk.CTkFrame(page, fg_color="transparent")
+        actions = ctk.CTkFrame(head, fg_color="transparent")
         actions.pack(fill="x", padx=20)
         # Greyed while busy, so the progress bar is the only accent on the page.
         copy = self._button(actions, "Copy as Markdown", None, primary=not restart,
@@ -685,8 +689,8 @@ class MeetingsPage:
         self._button(actions, "Delete", lambda: self._delete(folder, item),
                      state="disabled" if busy else "normal")
         if playable:
-            self._render_player(page, folder, item)
-        ctk.CTkFrame(page, height=1, fg_color=theme.BORDER).pack(fill="x", padx=20, pady=(8, 12))
+            self._render_player(head, folder, item)
+        ctk.CTkFrame(head, height=1, fg_color=theme.BORDER).pack(fill="x", padx=20, pady=(8, 12))
 
         message = {
             "recording": "Recording now. The transcript appears here after you stop.",
