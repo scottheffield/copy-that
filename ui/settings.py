@@ -225,14 +225,10 @@ class SettingsWindow:
         bottom = ctk.CTkFrame(self._win, fg_color=_CONTENT_BG)
         bottom.pack(side="bottom", fill="x")
 
-        self._status_label = ctk.CTkLabel(
-            bottom, text="", font=ctk.CTkFont(size=12),
-            text_color=_DESC_TEXT, fg_color="transparent",
-        )
-        self._status_label.pack(padx=20, pady=(4, 0), anchor="w")
-
+        # One row: the status on the left, Apply and Close on the right on settings pages.
+        # Other pages have no buttons; the window's own close button closes it.
         btn_frame = ctk.CTkFrame(bottom, fg_color="transparent")
-        btn_frame.pack(padx=20, pady=(4, 12), fill="x")
+        btn_frame.pack(padx=20, pady=(6, 8), fill="x")
         self._apply_btn = ctk.CTkButton(
             btn_frame, text="Apply changes", command=self._apply, width=100,
             fg_color=_ACCENT, hover_color=_ACCENT_HOVER, text_color=theme.ON_ACCENT,
@@ -243,6 +239,11 @@ class SettingsWindow:
             text_color=_BTN_SEC_TEXT, border_color=_CARD_BORDER, border_width=1,
         )
         self._close_btn.pack(side="right")
+        self._status_label = ctk.CTkLabel(
+            btn_frame, text="", font=ctk.CTkFont(size=12), height=28, anchor="w",
+            text_color=_DESC_TEXT, fg_color="transparent",
+        )
+        self._status_label.pack(side="left", fill="x", expand=True)
 
         body = ctk.CTkFrame(self._win, fg_color=_CONTENT_BG)
         body.pack(fill="both", expand=True)
@@ -576,9 +577,11 @@ class SettingsWindow:
         elif name == "Meetings":
             self._meetings_page.render()
         if name in SETTINGS_PAGES:
+            self._close_btn.pack(side="right", before=self._status_label)
             self._apply_btn.pack(side="right", padx=(8, 0), before=self._close_btn)
         else:
             self._apply_btn.pack_forget()
+            self._close_btn.pack_forget()
         self._pages[name].pack(fill="both", expand=True)
         if name != self._page:
             self._page = name
