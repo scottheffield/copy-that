@@ -669,3 +669,20 @@ def test_speaker_labeling_reads_compressed_tracks(tmp_path):
     meetings.compress_folder(folder, log=lambda m: None)
     samples = speakers.read_track(folder / "others.opus")
     assert samples.dtype == np.float32 and len(samples) == 2 * RATE
+
+
+@pytest.mark.parametrize("compress", [True, False])
+def test_app_compresses_only_when_the_setting_is_on(tmp_path, compress):
+    import queue
+    from types import SimpleNamespace
+    import app as app_module
+    from dictation_engine import DEFAULT_CONFIG
+    folder = _finished_meeting(tmp_path, datetime(2026, 11, 23, 9, 0))
+    gui = app_module.GUIApp.__new__(app_module.GUIApp)
+    gui._config = {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path), "meeting_compress_audio": compress}
+    gui._events, gui._closing = queue.Queue(), False
+    gui._engine = SimpleNamespace(active=False)
+    gui.meeting_in_use = lambda folder: False
+    gui._compress_finished()
+    assert (folder / "mic.wav").exists() is not compress
+    assert (folder / "mic.opus").exists() is compress

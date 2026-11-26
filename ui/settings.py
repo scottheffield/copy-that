@@ -507,6 +507,12 @@ class SettingsWindow:
             variable=self._speakers_var, **chk_opts,
         ).pack(anchor="w", pady=2)
 
+        self._compress_var = ctk.BooleanVar(value=self._config.get("meeting_compress_audio", True))
+        ctk.CTkCheckBox(
+            toggles_frame, text="Compress meeting audio after transcribing (off keeps the original WAV files)",
+            variable=self._compress_var, **chk_opts,
+        ).pack(anchor="w", pady=2)
+
         self._enter_var =ctk.BooleanVar(value=self._config.get("auto_enter", False))
         ctk.CTkCheckBox(
             toggles_frame, text="Press Enter after paste (auto-submit)",
@@ -726,6 +732,7 @@ class SettingsWindow:
         new_config["pause_media"] = self._media_var.get()
         new_config["meeting_skip_dictation"] = self._skip_dictation_var.get()
         new_config["meeting_speakers"] = self._speakers_var.get()
+        new_config["meeting_compress_audio"] = self._compress_var.get()
         if cleanup == "custom":
             new_config["cleanup_model_path"] = self._cleanup_path_var.get().strip()
         elif cleanup != "off":
