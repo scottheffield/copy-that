@@ -33,6 +33,42 @@ def developer_meetings_untouched(monkeypatch, tmp_path):
     monkeypatch.setitem(dictation_engine.DEFAULT_CONFIG, "meetings_dir", str(tmp_path / "CopyThat Meetings"))
 
 
+class _NoFocusProbe:
+    """Stands in for focus_probe.FocusProbe: reports nothing about the focused field."""
+
+    def __init__(self, log=None):
+        pass
+
+    def probe(self, hwnd, callback, retry_after=0.3):
+        pass
+
+    def read_screen(self, hwnd, callback, limit=3000):
+        pass
+
+    def warm(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def desktop_left_alone(monkeypatch):
+    """Engine tests must not read the developer's desktop through UI Automation. The real
+    probe made each test's result depend on the focused window, and started a COM thread
+    per engine. test_focus_probe tests its pure parts."""
+    import focus_probe
+    monkeypatch.setattr(focus_probe, "FocusProbe", _NoFocusProbe)
+
+
+@pytest.fixture(autouse=True)
+def tk_freed_on_the_main_thread():
+    """Free each test's garbage here, on the main thread. A Tk interpreter left in a
+    reference cycle was otherwise freed by whichever thread garbage collection next ran
+    on (a meeting worker, say), and Tcl aborts the process when that isn't the thread
+    that created it: "Windows fatal exception: code 0x80000003" (#88)."""
+    yield
+    import gc
+    gc.collect()
+
+
 @pytest.fixture(autouse=True)
 def gpu_setting_kept(monkeypatch):
     """Engine tests must not depend on the developer's GPUs. test_ov_devices

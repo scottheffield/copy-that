@@ -16,6 +16,9 @@ def root():
     root.withdraw()
     yield root
     root.destroy()
+    del root
+    import gc
+    gc.collect()  # Free the interpreter on this thread, not a worker's (#88)
 
 
 @pytest.fixture
