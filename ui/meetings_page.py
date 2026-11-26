@@ -41,6 +41,21 @@ PLAY_TICK_MS = 150     # How often the player bar and the playing line update
 EXPORT_POLL_MS = 300   # How often "Saving… N%" updates
 
 
+ICONS = ("\uf8ae", "\uf5b0")  # Solid pause and play in the Windows icon fonts
+_icon_families = {}
+
+
+def _icon_family(widget):
+    """The Windows icon font (Segoe Fluent Icons, or Segoe MDL2 Assets on Windows 10), or None,
+    in which case the play button says Play and Pause."""
+    if "found" not in _icon_families:
+        import tkinter.font
+        available = set(tkinter.font.families(widget))
+        _icon_families["found"] = next(
+            (f for f in ("Segoe Fluent Icons", "Segoe MDL2 Assets") if f in available), None)
+    return _icon_families["found"]
+
+
 def clock_seconds(stamp):
     """Seconds for a transcript time such as 05:03 or 1:02:03; None if it isn't one."""
     try:
@@ -842,9 +857,10 @@ class MeetingsPage:
         player = self._player
         bar = ctk.CTkFrame(page, fg_color="transparent")
         bar.pack(fill="x", padx=20, pady=(0, 4))
+        family = _icon_family(bar)
         play = ctk.CTkButton(bar, text="", width=40, height=30, command=self._toggle_play,
                              fg_color=theme.ACCENT, hover_color=theme.ACCENT_HOVER, text_color=theme.ON_ACCENT,
-                             font=ctk.CTkFont(size=14))
+                             font=ctk.CTkFont(family=family, size=14) if family else ctk.CTkFont(size=13))
         play.pack(side="left", padx=(0, 6))
         small = dict(width=52, height=30, fg_color=theme.SURFACE, hover_color=theme.SELECTED,
                      text_color=theme.TEXT, border_color=theme.BORDER, border_width=1, font=ctk.CTkFont(size=12))
@@ -961,7 +977,8 @@ class MeetingsPage:
         controls, player = self._controls, self._player
         if controls is None or player is None or not controls["play"].winfo_exists():
             return
-        controls["play"].configure(text="❚❚" if player.playing else "▶")
+        icons = ICONS if _icon_family(controls["play"]) else ("Pause", "Play")
+        controls["play"].configure(text=icons[0] if player.playing else icons[1])
         if not controls["sliding"]:
             controls["slider"].set(player.position)
             controls["time"].configure(text=f"{meetings.clock(player.position)} / {meetings.clock(player.duration)}")
