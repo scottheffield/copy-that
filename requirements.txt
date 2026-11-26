@@ -16,6 +16,7 @@ sounddevice
 numpy
 webrtcvad-wheels==2.0.14.post1
 PyAudioWPatch==0.2.12.9  # Meeting mode: record what the laptop plays (WASAPI loopback)
+soundfile==0.13.1  # Meeting mode: compress finished meeting audio to Opus (#61)
 
 # Input/output
 pyperclip

@@ -10,8 +10,11 @@ A meeting is one folder under the meetings folder:
         words.json       timed words per track, for labeling speakers later
         meta.json        title, start, duration, status
 
-Both tracks are 16 kHz mono WAV, the rate the speech model uses. The wave
-module rewrites the header on every write, so a crash leaves a playable file.
+Both tracks are recorded as 16 kHz mono WAV, the rate the speech model uses.
+The wave module rewrites the header on every write, so a crash leaves a
+playable file. Once the transcript and speaker labels are done, each WAV is
+compressed to mic.opus and others.opus, about a ninth of the size (#61).
+Re-transcribe and speaker labeling read either.
 
 Transcription runs in windows while the meeting is recorded, through the same
 model as dictation. Dictation always goes first: meeting work only takes the
@@ -109,6 +112,153 @@ class WavTrack:
                 self._file.close()
                 self._writer = self._file = None
             self._reader.close()
+
+
+class ArrayTrack:
+    """A finished track held in memory as 16-bit samples, read like a WavTrack.
+    About 58 MB for an hour."""
+
+    def __init__(self, pcm):
+        self._pcm = np.asarray(pcm, dtype="<i2")
+        self.frames = len(self._pcm)
+
+    def __len__(self):
+        return self.frames
+
+    def __getitem__(self, key):
+        if not isinstance(key, slice) or key.step not in (None, 1):
+            raise TypeError("ArrayTrack supports contiguous slices only")
+        return self._pcm[key].astype(np.float32) / 32768
+
+    @property
+    def seconds(self):
+        return self.frames / RATE
+
+    def close(self):
+        pass
+
+
+# -- Compressed audio (#61) ------------------------------------------------------
+#
+# Ogg Opus through libsndfile (the soundfile package). Its compression level maps
+# to a bitrate: 0.0 is about 256 kbps and 1.0 about 6 kbps.
+
+TRACKS = ("mic", "others")
+OPUS_LEVEL = 0.832  # A 48 kbps target; speech with pauses comes out at 20-32 kbps, about 24 MB an hour for both tracks
+COMPRESS_BLOCK = RATE * 60  # Samples encoded or checked at a time
+
+
+def track_file(folder, name):
+    """A track's audio file: the WAV while there is one, else the Opus; None when neither exists.
+    A WAV beside an Opus means compression didn't finish, so the WAV is the one to trust."""
+    folder = Path(folder)
+    for suffix in (".wav", ".opus"):
+        path = folder / f"{name}{suffix}"
+        if path.exists():
+            return path
+    return None
+
+
+def has_audio(folder):
+    return any(track_file(folder, name) for name in TRACKS)
+
+
+def read_opus(path):
+    """An Opus track as 16-bit samples."""
+    import soundfile
+    with soundfile.SoundFile(str(path)) as f:
+        if (f.samplerate, f.channels) != (RATE, 1):
+            raise ValueError("Unexpected meeting audio format")
+        return f.read(dtype="int16")
+
+
+def open_track(path):
+    """A finished track for reading, from its WAV or Opus file."""
+    path = Path(path)
+    if path.suffix.lower() == ".opus":
+        return ArrayTrack(read_opus(path))
+    return WavTrack.existing(path)
+
+
+def compress_track(wav_path, report=lambda fraction: None, stopped=lambda: False):
+    """Write name.opus beside name.wav, check it, then delete the WAV. True when done.
+
+    Encoded to name.opus.part first and checked by decoding it all, so a crash or a
+    bad file never costs the WAV. stopped() abandons the work and keeps the WAV."""
+    import soundfile
+    wav_path = Path(wav_path)
+    final = wav_path.with_suffix(".opus")
+    part = wav_path.with_name(final.name + ".part")
+    source = WavTrack.existing(wav_path)
+    try:
+        total = len(source)
+        with soundfile.SoundFile(str(part), "w", samplerate=RATE, channels=1, format="OGG",
+                                 subtype="OPUS", compression_level=OPUS_LEVEL) as out:
+            for start in range(0, total, COMPRESS_BLOCK):
+                if stopped():
+                    break
+                out.write(source[start:start + COMPRESS_BLOCK])
+                report(0.8 * min(total, start + COMPRESS_BLOCK) / max(1, total))
+    finally:
+        source.close()
+    if stopped():
+        part.unlink(missing_ok=True)
+        return False
+    decoded = 0
+    with soundfile.SoundFile(str(part)) as check:
+        while True:
+            block = check.read(COMPRESS_BLOCK, dtype="int16")
+            if not len(block):
+                break
+            decoded += len(block)
+            report(0.8 + 0.2 * decoded / max(1, total))
+    if decoded != total:
+        part.unlink(missing_ok=True)
+        raise ValueError(f"Compressed audio has {decoded} samples, expected {total}")
+    part.replace(final)
+    wav_path.unlink()
+    return True
+
+
+def compress_folder(folder, log=print, report=lambda fraction: None, stopped=lambda: False):
+    """Compress a finished meeting's WAV tracks. Returns the bytes saved.
+    A track that can't be compressed keeps its WAV; the next pass tries again."""
+    folder = Path(folder)
+    wavs = [folder / f"{name}.wav" for name in TRACKS if (folder / f"{name}.wav").exists()]
+    saved = 0
+    for i, wav in enumerate(wavs):
+        if stopped():
+            break
+        before = wav.stat().st_size
+        try:
+            done = compress_track(wav, lambda f: report((i + f) / len(wavs)), stopped)
+        except Exception as error:  # A file open elsewhere, a full disk, a codec error
+            log(f"Meeting: could not compress {wav.name} in {folder.name} ({type(error).__name__})")
+            continue
+        if done:
+            saved += before - wav.with_suffix(".opus").stat().st_size
+    return saved
+
+
+def compressible(root, skip=lambda folder: False):
+    """Finished meetings that still have a WAV: transcript done, speaker labels no longer
+    pending, running, or interrupted. skip(folder) leaves a folder in use alone."""
+    root = Path(root)
+    found = []
+    if not root.is_dir():
+        return found
+    for meta_path in sorted(root.glob("*/meta.json")):
+        folder = meta_path.parent
+        if skip(folder) or not any((folder / f"{name}.wav").exists() for name in TRACKS):
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        speakers = meta.get("speakers") if isinstance(meta.get("speakers"), dict) else {}
+        if meta.get("status") == "done" and speakers.get("status") not in ("pending", "running", "interrupted"):
+            found.append(folder)
+    return found
 
 
 def repair_wav(path):
@@ -1217,12 +1367,13 @@ class MeetingSession:
 
 
 def transcribe_folder(folder, get_model, busy, language="en", log=print, stopped=lambda: False):
-    """Transcribe a meeting from its WAV files (Re-transcribe)."""
+    """Transcribe a meeting from its WAV or Opus files (Re-transcribe)."""
     folder = Path(folder)
     meta = read_meta(folder)
-    mic = WavTrack.existing(folder / "mic.wav")
-    others = WavTrack.existing(folder / "others.wav")
+    mic = others = None
     try:
+        mic = open_track(track_file(folder, "mic") or folder / "mic.wav")
+        others = open_track(track_file(folder, "others") or folder / "others.wav")
         meta["duration_seconds"] = round(max(mic.seconds, others.seconds), 1)
         meta["status"] = "transcribing"
         save_meta(folder, meta)
@@ -1234,8 +1385,9 @@ def transcribe_folder(folder, get_model, busy, language="en", log=print, stopped
         meta["status"] = "failed"
         ok = False
     finally:
-        mic.close()
-        others.close()
+        for track in (mic, others):
+            if track is not None:
+                track.close()
     save_meta(folder, meta)
     return ok
 

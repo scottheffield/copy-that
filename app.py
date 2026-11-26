@@ -44,6 +44,7 @@ class GUIApp:
     _folder_renames = frozenset()  # Replaced by a set in __init__; folders to retitle once idle (#57)
     _speaker_jobs, _speaker_folder = (), None  # Replaced in __init__; speaker labeling queue
     _speaker_lock = threading.Lock()
+    _compressing = None  # (folder, fraction) while a meeting's audio is being compressed (#61)
     _moving_meetings = False  # True while meetings move to a newly chosen folder
     _recovery_started = False
 
@@ -739,18 +740,22 @@ class GUIApp:
         current = self._meeting
         if current and current.folder == folder and not current.finished.is_set():
             return True
-        return folder in self._retranscribing or self.finding_speakers(folder)
+        return folder in self._retranscribing or self.finding_speakers(folder) or self._compressing_now(folder)
 
     def meeting_progress(self, folder):
-        """(stage, fraction) while a meeting's transcript is being finished or its speakers
-        found: ("transcribing", 0.4), ("speakers", 0.6), ("speakers starting", seconds so far)
-        before separation reports a fraction, ("speakers waiting", None) in the queue; else None."""
+        """(stage, fraction) while a meeting's transcript is being finished, its speakers
+        found, or its audio compressed: ("transcribing", 0.4), ("speakers", 0.6),
+        ("speakers starting", seconds so far) before separation reports a fraction,
+        ("speakers waiting", None) in the queue, ("compressing", 0.5); else None."""
         from meetings import transcribe_progress
         from speakers import elapsed, progress
         folder = Path(folder)
         fraction = transcribe_progress(folder)
         if fraction is not None:
             return "transcribing", fraction
+        compressing = self._compressing
+        if compressing and compressing[0] == folder:
+            return "compressing", compressing[1]
         if self.finding_speakers(folder):
             fraction = progress(folder)
             if fraction is not None:
@@ -801,7 +806,40 @@ class GUIApp:
                 done = self._speaker_folder is None
             self._events.put(("action", self._refresh_meetings))
             if done:
+                self._compress_finished()
                 return
+
+    def _compressing_now(self, folder):
+        compressing = self._compressing
+        return bool(compressing) and compressing[0] == Path(folder)
+
+    def _compress_finished(self):
+        """Compress the audio of every finished meeting that still has WAV tracks (#61).
+        Runs on the speaker worker once its queue is empty, so the newest meeting's
+        speakers are done first, and catches up on any meeting a quit left behind."""
+        from meetings import compress_folder, compressible
+        try:
+            folders = compressible(self._config["meetings_dir"], skip=self.meeting_in_use)
+        except OSError:
+            return
+        for folder in folders:
+            while self._engine.active and not self._closing:
+                time.sleep(0.5)  # Dictation first
+            if self._closing:
+                return
+            self._compressing = (folder, 0.0)
+            self._events.put(("action", self._refresh_meetings))
+            try:
+                saved = compress_folder(folder, log,
+                                        report=lambda fraction, f=folder: setattr(self, "_compressing", (f, fraction)),
+                                        stopped=lambda: self._closing)
+                if saved:
+                    log(f"Meeting: compressed the audio in {folder.name}, {saved / 1e6:.0f} MB saved")
+            except Exception as error:
+                log(f"Meeting: compressing the audio failed ({type(error).__name__})")
+            finally:
+                self._compressing = None
+            self._events.put(("action", self._refresh_meetings))
 
     def meeting_status(self):
         """(state, elapsed seconds) for the Meetings page's Record button:

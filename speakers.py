@@ -17,7 +17,8 @@ from pathlib import Path
 import numpy as np
 
 import speaker_models
-from meetings import RATE, read_meta, read_speakers, read_words, rebuild_transcript, write_meta, write_speakers
+from meetings import (RATE, read_meta, read_opus, read_speakers, read_words, rebuild_transcript, track_file,
+                      write_meta, write_speakers)
 
 # Settings from the #44 spike: 9 of 9 voices on two panel recordings.
 CLUSTER_THRESHOLD = 1.0
@@ -70,7 +71,9 @@ def _load():
 
 
 def read_track(path):
-    """A meeting WAV (16 kHz mono 16-bit) as float32 samples."""
+    """A meeting track (16 kHz mono 16-bit WAV, or its Opus copy) as float32 samples."""
+    if Path(path).suffix.lower() == ".opus":
+        return read_opus(path).astype(np.float32) / 32768.0
     with wave.open(str(path), "rb") as w:
         if (w.getframerate(), w.getnchannels(), w.getsampwidth()) != (RATE, 1, 2):
             raise ValueError("Unexpected meeting audio format")
@@ -94,7 +97,7 @@ def diarize(samples, stopped=lambda: False, report=lambda fraction: None):
 
 
 def _diarize_child(path, conn):
-    """Runs in its own process: diarize one WAV, sending progress, then the segments.
+    """Runs in its own process: diarize one track, sending progress, then the segments.
     Normal priority: below normal ran it at under half a core on a busy PC (likely on
     efficiency cores), 80 minutes taking over 10 minutes. Two threads leave room for dictation.
     It has no window, so Windows also throttles it unless told not to; it ran faster
@@ -114,7 +117,7 @@ def _diarize_child(path, conn):
 
 
 def diarize_apart(path, stopped=lambda: False, report=lambda fraction: None):
-    """diarize() on a WAV file in a separate process.
+    """diarize() on a track file (WAV or Opus) in a separate process.
 
     sherpa-onnx holds the GIL while it works, which froze the app's window and
     hotkey for minutes on a long meeting. In its own process it can't, and
@@ -225,7 +228,7 @@ def _set_status(folder, status, **extra):
 
 def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
     """Label the speakers in one meeting's transcript. Returns the final status.
-    diarize_fn(wav path, stopped, report) returns segments; by default a separate process."""
+    diarize_fn(track path, stopped, report) returns segments; by default a separate process."""
     folder = Path(folder)
     diarize_fn = diarize_fn or diarize_apart
     try:
@@ -244,7 +247,8 @@ def find_speakers(folder, log=print, stopped=lambda: False, diarize_fn=None):
     # the time so far meanwhile, over a still bar.
     _started[folder] = started
     try:
-        segments = diarize_fn(folder / f"{track}.wav", stopped, lambda f: _progress.__setitem__(folder, f))
+        path = track_file(folder, track) or folder / f"{track}.wav"
+        segments = diarize_fn(path, stopped, lambda f: _progress.__setitem__(folder, f))
         ids = merge_strays(assign([w.time for w in words], segments))
     except Stopped:
         _set_status(folder, "pending")  # Marked interrupted on the next launch (#66)

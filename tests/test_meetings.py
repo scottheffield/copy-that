@@ -580,3 +580,92 @@ def test_a_rename_during_the_meeting_is_kept(tmp_path):
     assert job.finish(stale)
     assert (folder / "transcript.md").read_text(encoding="utf-8").startswith("# Panel discussion")
     assert stale["title"] == "Panel discussion"
+
+
+# -- Compressed audio (#61) ------------------------------------------------------
+
+def _speech_like(seconds):
+    """A tone with a slow wobble, so Opus has something speech-shaped to keep."""
+    t = np.arange(int(seconds * RATE)) / RATE
+    return (0.3 * np.sin(2 * np.pi * 300 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * t))).astype(np.float32)
+
+
+def _finished_meeting(root, when, speakers_status="done", status="done"):
+    folder = new_folder(root, when)
+    for name in ("mic.wav", "others.wav"):
+        track = WavTrack(folder / name)
+        track.append(_speech_like(2))
+        track.close()
+    meta = {**META, "status": status}
+    if speakers_status:
+        meta["speakers"] = {"status": speakers_status}
+    meetings.write_meta(folder, meta)
+    return folder
+
+
+def test_compress_track_replaces_the_wav_with_an_opus_of_the_same_length(tmp_path):
+    folder = _finished_meeting(tmp_path, datetime(2026, 11, 23, 9, 0))
+    original = WavTrack.existing(folder / "mic.wav")
+    samples = original[0:len(original)]
+    original.close()
+    assert meetings.compress_track(folder / "mic.wav")
+    assert not (folder / "mic.wav").exists() and not (folder / "mic.opus.part").exists()
+    assert meetings.track_file(folder, "mic") == folder / "mic.opus"
+    track = meetings.open_track(folder / "mic.opus")
+    decoded = track[0:len(track)]
+    assert len(decoded) == len(samples)
+    assert np.corrcoef(samples, decoded)[0, 1] > 0.9  # Lossy, but the same sound
+
+
+def test_stopped_compression_keeps_the_wav(tmp_path):
+    folder = _finished_meeting(tmp_path, datetime(2026, 11, 23, 9, 0))
+    assert not meetings.compress_track(folder / "mic.wav", stopped=lambda: True)
+    assert (folder / "mic.wav").exists()
+    assert not (folder / "mic.opus").exists() and not (folder / "mic.opus.part").exists()
+
+
+def test_a_wav_beside_an_opus_is_trusted_and_compressed_again(tmp_path):
+    """A crash between writing the Opus and deleting the WAV leaves both."""
+    folder = _finished_meeting(tmp_path, datetime(2026, 11, 23, 9, 0))
+    (folder / "mic.opus").write_bytes(b"half written")
+    (folder / "mic.opus.part").write_bytes(b"left by a crash")
+    assert meetings.track_file(folder, "mic") == folder / "mic.wav"
+    assert meetings.compress_folder(folder, log=lambda m: None) > 0
+    assert sorted(p.name for p in folder.glob("*.opus*")) == ["mic.opus", "others.opus"]
+    assert len(meetings.open_track(folder / "mic.opus")) == 2 * RATE
+
+
+def test_only_finished_meetings_are_compressible(tmp_path):
+    hour = iter(range(0, 24))
+    when = lambda: datetime(2026, 11, 23, next(hour), 0)
+    done = _finished_meeting(tmp_path, when())
+    labels_off = _finished_meeting(tmp_path, when(), speakers_status="skipped")
+    before_speakers = _finished_meeting(tmp_path, when(), speakers_status=None)
+    labels_failed = _finished_meeting(tmp_path, when(), speakers_status="failed")
+    for status in ("pending", "running", "interrupted"):
+        _finished_meeting(tmp_path, when(), speakers_status=status)
+    for status in ("recording", "transcribing", "interrupted", "failed"):
+        _finished_meeting(tmp_path, when(), status=status)
+    in_use = _finished_meeting(tmp_path, when())
+    compressed = _finished_meeting(tmp_path, when())
+    meetings.compress_folder(compressed, log=lambda m: None)
+    found = meetings.compressible(tmp_path, skip=lambda folder: folder == in_use)
+    assert found == [done, labels_off, before_speakers, labels_failed]
+
+
+def test_re_transcribe_reads_compressed_tracks(tmp_path):
+    folder = _finished_meeting(tmp_path, datetime(2026, 11, 23, 9, 0))
+    meetings.compress_folder(folder, log=lambda m: None)
+    assert not list(folder.glob("*.wav")) and meetings.has_audio(folder)
+    model = FakeModel()
+    assert transcribe_folder(folder, lambda: model, lambda: False, log=lambda m: None)
+    assert meetings.read_meta(folder)["status"] == "done"
+    assert not list(folder.glob("*.wav"))  # Re-transcribe never writes the WAVs back
+
+
+def test_speaker_labeling_reads_compressed_tracks(tmp_path):
+    import speakers
+    folder = _finished_meeting(tmp_path, datetime(2026, 11, 23, 9, 0))
+    meetings.compress_folder(folder, log=lambda m: None)
+    samples = speakers.read_track(folder / "others.opus")
+    assert samples.dtype == np.float32 and len(samples) == 2 * RATE

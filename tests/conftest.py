@@ -26,6 +26,14 @@ def developer_media_untouched(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def developer_meetings_untouched(monkeypatch, tmp_path):
+    """The default meetings folder is the developer's real one; finished meetings there
+    get compressed (#61). Tests that build a config from DEFAULT_CONFIG use a temp one."""
+    import dictation_engine
+    monkeypatch.setitem(dictation_engine.DEFAULT_CONFIG, "meetings_dir", str(tmp_path / "CopyThat Meetings"))
+
+
+@pytest.fixture(autouse=True)
 def gpu_setting_kept(monkeypatch):
     """Engine tests must not depend on the developer's GPUs. test_ov_devices
     imports resolve_device directly, so it still tests the real lookup."""
