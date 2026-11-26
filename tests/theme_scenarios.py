@@ -601,3 +601,84 @@ def test_renaming_a_meeting_moves_its_folder_and_the_page_follows(root, tmp_path
     assert new.exists() and not folder.exists()
     assert page._detail == new and page._title_field.get() == "Design review"
     window._win.destroy()
+
+
+def test_meeting_page_plays_from_a_clicked_line_and_saves_the_audio(root, tmp_path, monkeypatch):
+    """#63: the player bar, click a line to play from it, the playing line lit, Save audio."""
+    import numpy as np
+    import sounddevice
+    from tkinter import filedialog
+    import meetings
+    import playback
+    folder = make_meeting(tmp_path, "2026-11-24 1300", "2026-11-24T13:00:00", "Design review",
+                          lines=[("Me", "First line."), ("Others", "Second line."), ("Me", "Third line.")])
+    t = np.arange(4 * meetings.RATE) / meetings.RATE
+    for name in ("mic", "others"):
+        (folder / f"{name}.wav").unlink(missing_ok=True)
+        track = meetings.WavTrack(folder / f"{name}.wav")
+        track.append((0.2 * np.sin(2 * np.pi * 300 * t)).astype(np.float32))
+        track.close()
+
+    class Stream:
+        def __init__(self, **options):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(sounddevice, "OutputStream", Stream)
+    released = []
+
+    class Provider(FakeMeetings):
+        dictation = False
+
+        def dictating(self):
+            return self.dictation
+
+        def playback_released(self):
+            released.append(True)
+
+    provider = Provider()
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=provider)
+    window.show("Meetings")
+    page = window._meetings_page
+    page.show_detail(folder)
+    root.update()
+    texts = page_texts(window._pages["Meetings"])
+    assert "00:00 / 00:04" in texts
+    assert len(page._line_widgets) == 3
+    # Clicking the second line's words plays from just before it, and lights it.
+    _, _, body = page._line_widgets[1]
+    page._play_from(page._line_widgets[1][0])
+    assert page._player.playing and playback.holding(folder)
+    assert page._player.position == 0.7
+    assert page._lit == 1 and body.cget("fg_color") == theme.SELECTED
+    # Dictation pauses it, keeping the place; leaving the page also pauses.
+    provider.dictation = True
+    page._play_tick()
+    root.update()  # The release reaches the app when idle
+    assert not page._player.playing and not playback.holding(folder) and released
+    provider.dictation = False
+    page._toggle_play()
+    window._select_page("General")
+    assert not page._player.playing
+    window._select_page("Meetings")
+    # Save audio writes one MP3.
+    target = tmp_path / "saved.mp3"
+    monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **_options: str(target))
+    page._save_audio(folder, {"title": "Design review"})
+    for _ in range(200):
+        root.update()
+        if page._export is None:
+            break
+        import time
+        time.sleep(0.02)
+    assert page._export is None and target.exists()
+    window._close()
+    assert page._player is None and not playback.holding(folder)

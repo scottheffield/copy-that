@@ -692,7 +692,7 @@ class GUIApp:
         """Give a meeting's folder its title: now, or once the meeting is idle (Windows can't
         rename a folder while its files are open). Returns the folder's path now."""
         folder = Path(folder)
-        if self.meeting_in_use(folder):
+        if self._meeting_files_open(folder):
             self._folder_renames.add(folder)
             return folder
         return self._rename_folder_now(folder)
@@ -717,7 +717,7 @@ class GUIApp:
 
     def _rename_waiting_folders(self):
         for folder in list(self._folder_renames):
-            if not self.meeting_in_use(folder):
+            if not self._meeting_files_open(folder):
                 self._folder_renames.discard(folder)
                 if folder.exists():
                     self._rename_folder_now(folder)
@@ -741,6 +741,19 @@ class GUIApp:
         if current and current.folder == folder and not current.finished.is_set():
             return True
         return folder in self._retranscribing or self.finding_speakers(folder) or self._compressing_now(folder)
+
+    def _meeting_files_open(self, folder):
+        """meeting_in_use, or its audio is open for playback or an export (#63)."""
+        from playback import holding
+        return self.meeting_in_use(folder) or holding(folder)
+
+    def playback_released(self):
+        """The Meetings page closed a meeting's audio: a rename that waited for it can go."""
+        self._rename_waiting_folders()
+
+    def dictating(self):
+        """True while a take is being recorded or transcribed; playback pauses for it."""
+        return bool(self._engine.active)
 
     def meeting_progress(self, folder):
         """(stage, fraction) while a meeting's transcript is being finished, its speakers
@@ -821,7 +834,7 @@ class GUIApp:
         if not self._config.get("meeting_compress_audio", True):
             return  # The user keeps the original WAV files
         try:
-            folders = compressible(self._config["meetings_dir"], skip=self.meeting_in_use)
+            folders = compressible(self._config["meetings_dir"], skip=self._meeting_files_open)
         except OSError:
             return
         for folder in folders:
@@ -829,6 +842,9 @@ class GUIApp:
                 time.sleep(0.5)  # Dictation first
             if self._closing:
                 return
+            from playback import holding
+            if holding(folder):
+                continue  # Playing now; the next pass compresses it
             self._compressing = (folder, 0.0)
             self._events.put(("action", self._refresh_meetings))
             try:
@@ -879,7 +895,7 @@ class GUIApp:
 
         def run():
             try:
-                moved, failed = move_meetings(old, folder, skip=self.meeting_in_use)
+                moved, failed = move_meetings(old, folder, skip=self._meeting_files_open)
             except OSError as error:
                 log(f"Meeting: could not move meetings ({type(error).__name__})")
                 moved, failed = 0, -1
