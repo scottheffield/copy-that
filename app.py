@@ -818,6 +818,8 @@ class GUIApp:
         Runs on the speaker worker once its queue is empty, so the newest meeting's
         speakers are done first, and catches up on any meeting a quit left behind."""
         from meetings import compress_folder, compressible
+        if not self._config.get("meeting_compress_audio", True):
+            return  # The user keeps the original WAV files
         try:
             folders = compressible(self._config["meetings_dir"], skip=self.meeting_in_use)
         except OSError:

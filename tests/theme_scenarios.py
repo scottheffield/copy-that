@@ -64,6 +64,10 @@ def test_settings_survive_appearance_change(root):
     settings._speakers_var.set(False)
     settings._apply()
     assert saved[-1]["meeting_speakers"] is False
+    assert saved[-1]["meeting_compress_audio"] is True
+    settings._compress_var.set(False)
+    settings._apply()
+    assert saved[-1]["meeting_compress_audio"] is False
     settings._win.destroy()
 
 
