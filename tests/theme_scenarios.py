@@ -48,6 +48,7 @@ def test_settings_survive_appearance_change(root):
     for mode in ("dark", "light"):
         ctk.set_appearance_mode(mode)
         settings.refresh_theme()
+        assert settings._nav_divider.cget("bg") == theme.color(theme.BORDER, mode)
         for page in settings._pages:
             settings._select_page(page)
             root.update_idletasks()
