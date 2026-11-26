@@ -19,7 +19,7 @@ if reason:
     raise SystemExit(f"Speaker models not ready ({reason}). Run: python speaker_models.py")
 for name in speaker_models.MODELS:
     datas.append((str(speaker_models.DEV_DIR / name), speaker_models.BUNDLE_NAME))
-for package in ("openvino", "openvino_genai", "openvino_tokenizers", "onnxruntime", "customtkinter", "_sounddevice_data", "winrt", "pyaudiowpatch", "sherpa_onnx"):
+for package in ("openvino", "openvino_genai", "openvino_tokenizers", "onnxruntime", "customtkinter", "_sounddevice_data", "_soundfile_data", "winrt", "pyaudiowpatch", "sherpa_onnx"):
     data, binary, hidden = collect_all(package)
     datas += data
     binaries += binary

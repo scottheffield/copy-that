@@ -44,6 +44,8 @@ def progress_text(progress):
     stage, value = progress
     if stage == "transcribing":
         return f"Transcribing\u2026 {int(value * 100)}%"
+    if stage == "compressing":
+        return f"Compressing the audio\u2026 {int(value * 100)}%"
     # Separation has two steps: finding where speech turns fall (no progress reported,
     # so the time so far), then matching voices (a real percentage).
     if stage == "speakers":
@@ -55,7 +57,7 @@ def progress_text(progress):
 
 def progress_fraction(progress):
     """The bar's fraction, or None while there's no real one yet."""
-    return progress[1] if progress[0] in ("transcribing", "speakers") else None
+    return progress[1] if progress[0] in ("transcribing", "speakers", "compressing") else None
 
 
 class Spinner:
@@ -651,7 +653,7 @@ class MeetingsPage:
         self._button(actions, "Open transcript", lambda: self._open(folder / "transcript.md"),
                      state="normal" if text else "disabled")
         self._button(actions, "Open folder", lambda: self._open(folder))
-        has_audio = (folder / "mic.wav").exists() or (folder / "others.wav").exists()
+        has_audio = meetings.has_audio(folder)
         self._button(actions, "Re-transcribe", lambda: self._retranscribe(folder), primary=restart,
                      state="disabled" if busy or not has_audio or not self._provider else "normal")
         self._button(actions, "Delete", lambda: self._delete(folder, item),
