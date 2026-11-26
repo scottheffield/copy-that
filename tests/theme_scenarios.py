@@ -114,10 +114,10 @@ def test_one_window_apply_only_on_settings_pages(root):
     root.after(window.FRONT_MS + 100, root.quit)
     root.mainloop()
     assert not window._win.attributes("-topmost")
-    assert window.page == "General" and window._apply_btn.winfo_manager() == "pack"
+    assert window.page == "General" and window._apply_btn.winfo_manager() == "pack" and window._close_btn.winfo_manager() == "pack"
     window.show("Dictation")
     root.update_idletasks()
-    assert window.page == "Dictation" and window._apply_btn.winfo_manager() == ""
+    assert window.page == "Dictation" and window._apply_btn.winfo_manager() == "" and window._close_btn.winfo_manager() == ""
     labels = [w.cget("text") for w in window._pages["Dictation"].winfo_children()[-1].winfo_children()
               if isinstance(w, ctk.CTkLabel)]
     assert "First take" in labels
