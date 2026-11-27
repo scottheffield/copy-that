@@ -1,4 +1,4 @@
-"""Glass UI rendering helpers — 2x supersampled PIL shapes + Windows 11 Acrylic."""
+"""Glass UI rendering helpers: supersampled PIL shapes and the DWM title bar color."""
 
 from PIL import Image, ImageDraw
 
@@ -49,43 +49,6 @@ def set_title_bar_color(window, bg_hex, text_hex="#FFFFFF"):
         text = c_int(_to_colorref(text_hex))
         windll.dwmapi.DwmSetWindowAttribute(
             hwnd, 36, byref(text), ctypes.sizeof(text))
-    except Exception:
-        pass
-
-
-# --- DWM Acrylic -------------------------------------------------------------
-
-def apply_acrylic(window, extend_to_client=False):
-    """Apply Windows 11 Acrylic backdrop to a CTkToplevel window.
-
-    Args:
-        window: CTkToplevel or CTk window.
-        extend_to_client: If True, extend the DWM frame into the entire
-            client area so the acrylic blur fills the window background.
-            The window bg must be set to "black" for DWM to treat those
-            pixels as transparent to the blur.
-
-    Silent no-op on non-Windows or pre-Win11 systems.
-    """
-    try:
-        import ctypes
-        from ctypes import Structure, c_int, byref, windll
-        hwnd = windll.user32.GetParent(window.winfo_id())
-        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        val = c_int(1)
-        windll.dwmapi.DwmSetWindowAttribute(
-            hwnd, 20, byref(val), ctypes.sizeof(val))
-        # DWMWA_SYSTEMBACKDROP_TYPE = 38, value 3 = Acrylic
-        val2 = c_int(3)
-        windll.dwmapi.DwmSetWindowAttribute(
-            hwnd, 38, byref(val2), ctypes.sizeof(val2))
-
-        if extend_to_client:
-            class MARGINS(Structure):
-                _fields_ = [("l", c_int), ("r", c_int),
-                            ("t", c_int), ("b", c_int)]
-            margins = MARGINS(-1, -1, -1, -1)
-            windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, byref(margins))
     except Exception:
         pass
 
@@ -287,45 +250,6 @@ def render_button(diameter, ring_color, bg_color, icon_img):
     img.paste(icon_s, (offset, offset), icon_s)
 
     return img.resize((diameter, diameter), Image.LANCZOS)
-
-
-# --- Waveform rendering ------------------------------------------------------
-
-def render_waveform(width, height, levels, bar_width=3, gap=3, color="#FF6961"):
-    """Render audio waveform bars at 2x and downsample.
-
-    Args:
-        width: Output width.
-        height: Output height.
-        levels: List of float values 0.0-1.0.
-        bar_width: Width of each bar in output pixels.
-        gap: Gap between bars in output pixels.
-        color: '#RRGGBB' hex color.
-
-    Returns an RGBA PIL Image at (width, height).
-    """
-    s = SUPERSAMPLE
-    sw, sh = width * s, height * s
-    sbw, sg = bar_width * s, gap * s
-
-    img = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    c = _hex_to_rgba(color)
-
-    max_h = sh - 4 * s  # 4px margin top+bottom at output scale
-    mid_y = sh // 2
-    x = 0
-    for lv in levels:
-        if x + sbw > sw:
-            break
-        bh = max(4 * s, int(lv * max_h))
-        y1 = mid_y - bh // 2
-        y2 = mid_y + bh // 2
-        r = sbw // 2
-        draw.rounded_rectangle([x, y1, x + sbw, y2], radius=r, fill=c)
-        x += sbw + sg
-
-    return img.resize((width, height), Image.LANCZOS)
 
 
 # --- Compositing helpers -----------------------------------------------------

@@ -1,15 +1,13 @@
-"""Tests for ui.glass — PIL rendering helpers and DWM acrylic."""
+"""Tests for ui.glass: PIL rendering helpers."""
 
-import sys
-from unittest.mock import MagicMock, patch
 from PIL import Image
 
 import pytest
 
 from ui.glass import (
-    TRANSPARENT_RGB, PillCache, apply_acrylic, composite_on_transparent,
+    TRANSPARENT_RGB, PillCache, composite_on_transparent,
     render_dot, render_icon_mic, render_icon_stop, render_pill,
-    render_waveform, render_button, _hex_to_rgba,
+    render_button, _hex_to_rgba,
 )
 
 
@@ -104,27 +102,6 @@ class TestRenderButton:
         assert a > 100
 
 
-# --- render_waveform ----------------------------------------------------------
-
-class TestRenderWaveform:
-    def test_returns_correct_size(self):
-        img = render_waveform(100, 40, [0.5, 0.8, 0.3])
-        assert img.size == (100, 40)
-        assert img.mode == "RGBA"
-
-    def test_visible_pixels_at_nonzero_levels(self):
-        img = render_waveform(100, 40, [0.5, 0.8, 1.0, 0.3])
-        pixels = list(img.tobytes())
-        visible = sum(1 for i in range(3, len(pixels), 4) if pixels[i] > 10)
-        assert visible > 5, "Waveform should have visible bars"
-
-    def test_empty_levels(self):
-        img = render_waveform(100, 40, [])
-        pixels = list(img.tobytes())
-        visible = sum(1 for i in range(3, len(pixels), 4) if pixels[i] > 10)
-        assert visible == 0, "Empty levels should produce empty image"
-
-
 # --- composite_on_transparent -------------------------------------------------
 
 class TestCompositeOnTransparent:
@@ -187,40 +164,6 @@ class TestPillCache:
         assert (10, 10) not in cache._cache
         assert (20, 20) in cache._cache
         assert (30, 30) in cache._cache
-
-
-# --- apply_acrylic -----------------------------------------------------------
-
-class TestApplyAcrylic:
-    def test_calls_dwm_with_correct_attrs(self):
-        """Verify the correct DWM attribute constants are used."""
-        mock_window = MagicMock()
-        mock_window.winfo_id.return_value = 12345
-
-        mock_user32 = MagicMock()
-        mock_user32.GetParent.return_value = 67890
-        mock_dwmapi = MagicMock()
-
-        with patch.dict(sys.modules, {}):
-            import ctypes as real_ctypes
-            with patch.object(real_ctypes, "windll", create=True) as mock_windll:
-                mock_windll.user32 = mock_user32
-                mock_windll.dwmapi = mock_dwmapi
-                apply_acrylic(mock_window)
-
-        # Should call DwmSetWindowAttribute twice:
-        # attr 20 (dark mode) and attr 38 (acrylic)
-        assert mock_dwmapi.DwmSetWindowAttribute.call_count == 2
-        calls = mock_dwmapi.DwmSetWindowAttribute.call_args_list
-        assert calls[0][0][1] == 20  # DWMWA_USE_IMMERSIVE_DARK_MODE
-        assert calls[1][0][1] == 38  # DWMWA_SYSTEMBACKDROP_TYPE
-
-    def test_silent_on_failure(self):
-        """apply_acrylic should not raise on platforms without windll."""
-        mock_window = MagicMock()
-        mock_window.winfo_id.side_effect = Exception("no windll")
-        # Should not raise
-        apply_acrylic(mock_window)
 
 
 # --- _hex_to_rgba helper -----------------------------------------------------
