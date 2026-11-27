@@ -21,6 +21,12 @@ def root():
     ctk.set_appearance_mode("system")
 
 
+@pytest.fixture(autouse=True)
+def no_real_meetings(monkeypatch, tmp_path):
+    """The window opens on Meetings: keep every test off the user's own meetings folder."""
+    monkeypatch.setitem(DEFAULT_CONFIG, "meetings_dir", str(tmp_path / "no-meetings"))
+
+
 def test_follow_system_and_manual_override(root):
     changes = []
     with patch.object(ctk.AppearanceModeTracker, "detect_appearance_mode", return_value=0) as detect:
@@ -111,8 +117,13 @@ def test_one_window_apply_only_on_settings_pages(root):
     assert window._win.title() == "CopyThat"
     # On top only while it comes in front, then an ordinary window Alt-Tab can cover.
     assert window._win.attributes("-topmost")
-    root.after(window.FRONT_MS + 100, root.quit)
-    root.mainloop()
+    # Pump events instead of mainloop: a quit scheduled from after() sometimes never
+    # returned from mainloop here, hanging the run (seen locally, not in CI).
+    import time
+    deadline = time.monotonic() + (window.FRONT_MS + 100) / 1000
+    while time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.01)
     assert not window._win.attributes("-topmost")
     assert window.page == "Meetings" and window._apply_btn.winfo_manager() == "" and window._close_btn.winfo_manager() == ""
     window.show("Dictation")

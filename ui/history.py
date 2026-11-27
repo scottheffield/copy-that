@@ -3,6 +3,7 @@ import customtkinter as ctk
 from ui import theme
 
 DESCRIPTION = "Your recent takes, close at hand."
+STATUS_LABELS = {"retained": "Not pasted"}  # Kept here because the paste didn't happen
 
 
 def build_history_page(page, root, entries):
@@ -24,9 +25,10 @@ def build_history_page(page, root, entries):
         frame = ctk.CTkFrame(page, fg_color='transparent')
         frame.pack(fill='x', padx=14, pady=(0, 18))
         ctk.CTkFrame(frame, height=1, fg_color=theme.BORDER).pack(fill='x', pady=(0, 16))
-        ts = entry.get('timestamp', '')[:19].replace('T', ' ')
-        status = entry.get('status', '').replace('_', ' ').capitalize()
-        header = f"{ts} · {entry.get('duration', 0):.1f}s · {status}"
+        status = entry.get('status', '')
+        status = STATUS_LABELS.get(status, status.replace('_', ' ').capitalize())
+        header = ' · '.join(part for part in (
+            when(entry.get('timestamp', '')), length(entry.get('duration', 0)), status) if part)
         ctk.CTkLabel(frame, text=header, text_color=theme.MUTED,
             font=ctk.CTkFont(size=12)).pack(anchor='w', padx=6)
         text = entry.get('text', '')
@@ -44,6 +46,27 @@ def build_history_page(page, root, entries):
                 text_color=theme.TEXT, border_color=theme.BORDER, border_width=1)
             button.configure(command=lambda t=value, b=button, c=caption: _copy(root, t, b, c))
             button.pack(side='left', padx=(0, 8))
+
+
+def when(timestamp, today=None):
+    """9:05 AM for a take from today; Nov 26, 9:05 AM for an older one; "" if unreadable."""
+    from datetime import date, datetime
+    try:
+        moment = datetime.fromisoformat(timestamp)
+    except (TypeError, ValueError):
+        return ''
+    clock = moment.strftime('%I:%M %p').lstrip('0')
+    if moment.date() == (today or date.today()):
+        return clock
+    return f"{moment.strftime('%b')} {moment.day}, {clock}"
+
+
+def length(seconds):
+    """41 seconds, 1 second, or 1:05 from a minute up."""
+    seconds = round(seconds or 0)
+    if seconds < 60:
+        return f"{seconds} second{'' if seconds == 1 else 's'}"
+    return f"{seconds // 60}:{seconds % 60:02d}"
 
 
 def _copy(root, text, button, caption):

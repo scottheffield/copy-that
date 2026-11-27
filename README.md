@@ -75,8 +75,8 @@ The sidebar holds **Meetings**, **Dictation**, and **Dictionary**, with **Settin
 - **Spoken commands** (experimental, off by default) interpret "new line", "new paragraph", and "scratch that" within this take. They never edit previously pasted text. Known issues: punctuation around a command can be left behind, ordinary phrases like "a new line of products" also trigger it, and Polish may remove line breaks.
 - **Polish** (AI cleanup) fixes punctuation, stutters, and spoken corrections. It offers Off (dictionary and filler rules only), Standard (Qwen3 4B), Thorough (Qwen3 8B), or a custom local model. Qwen3 1.7B can be installed with `-CleanupModel 1.7b` as a lighter option; on the same takes it was about 0.1-0.2s faster than 4B but handled self-corrections less well. 8B is slower than 4B. Off avoids the model delay.
   Qwen cleanup uses prompt lookup to speed up copying the transcript. Meaning guards and deadline fallback still apply.
-- **Add a space after dictation** can be turned off if you prefer exact insertion.
-- **Press Enter after paste** is optional and submits text wherever Enter normally submits it. It is off by default.
+- **Add a space after each dictation** can be turned off if you prefer exact insertion.
+- **Press Enter after pasting** is optional and submits text wherever Enter normally submits it. It is off by default.
 - **Issue keys** are set in `config.json`, not Settings. With `"issue_keys": ["OPS"]`, saying "OPS twenty three" writes `OPS-23`. The list is empty by default.
 
 **History** retains the latest 20 completed results in memory and provides **Copy final** and **Copy raw**. If the destination window changes, or the destination is one of this app's own windows, automatic paste is skipped and the result remains here; press Shift+Alt+Z in the intended field to paste it. History resets when the app exits or its engine reloads.
