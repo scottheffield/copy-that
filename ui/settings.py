@@ -601,7 +601,8 @@ class SettingsWindow:
             ("Save takes for replay", self._log_var, "Keeps each take's audio and text on this PC, for testing."),
         ))
         from version import label as version_label
-        ctk.CTkLabel(self._pages["Advanced"], text=f"CopyThat {version_label()}",
+        # The version, and which processor runs speech recognition (the tray menu used to say).
+        ctk.CTkLabel(self._pages["Advanced"], text=f"CopyThat {version_label()} · {self._config.get('device', 'GPU')}",
                      text_color=_DESC_TEXT).pack(padx=20, pady=(4, 18), anchor="w")
         scroll = self._pages["Dictionary"]
         ctk.CTkLabel(scroll, text="One entry per line: what you say = how it should be written.",
