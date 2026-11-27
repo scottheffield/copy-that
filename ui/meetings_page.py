@@ -147,6 +147,22 @@ def _wrap(label, frame, margin=24):
         wraplength=max(100, e.width / label._get_widget_scaling() - margin)), add="+")
 
 
+def _fix_columns(preview, lines, fonts):
+    """Size the time and speaker columns for the widest entry in the whole transcript, so they
+    don't grow as later lines are drawn and squeeze or clip the names drawn before them.
+    Returns their total width, unscaled."""
+    stamp_font, speaker_font, _body = fonts
+    scale = preview._get_widget_scaling()
+    pad = 10 + 2  # The grid's padx, plus a little room
+    widest = lambda font, texts: max((font.measure(text) for text in texts), default=0)
+    stamps = {line[0] for line in lines}
+    names = {line[1] + (" ▾" if line[3] else "") for line in lines}
+    columns = [widest(stamp_font, stamps) + pad, widest(speaker_font, names) + pad]
+    for column, width in enumerate(columns):
+        preview.grid_columnconfigure(column, minsize=round(width * scale))
+    return sum(columns)
+
+
 class MeetingsPage:
     """Renders into page (a plain frame): a fixed header (title, Record meeting, search,
     Folder menu) over a scrolling body. provider offers retranscribe_meeting(folder),
@@ -160,6 +176,8 @@ class MeetingsPage:
                                             scrollbar_button_color=theme.BORDER,
                                             scrollbar_button_hover_color=theme.MUTED)
         self._page.pack(fill="both", expand=True)
+        self._bodies, self._wrap_width, self._text_margin = [], None, 150
+        self._page._parent_canvas.bind("<Configure>", lambda e: self._rewrap(e.width), add="+")
         self._record = None
         self._tick_id = None
         self._meetings_dir = meetings_dir  # Callable: the folder can change in Settings
@@ -205,6 +223,7 @@ class MeetingsPage:
         for child in self._page.winfo_children():
             child.destroy()
         self._controls, self._line_widgets, self._lit = None, [], None
+        self._bodies, self._wrap_width = [], None
         self._results = None
         self._stop_progress()
         # Both views pin a header above the scrolling body: the list's title, Record, and
@@ -746,13 +765,27 @@ class MeetingsPage:
         preview.grid_columnconfigure(2, weight=1)
         fonts = (ctk.CTkFont(size=13), ctk.CTkFont(size=14, weight="bold"), ctk.CTkFont(size=15))
         self._rows, self._colors = rows or [], colors
+        # Lines wrap to what's left of the visible width after the page margins (20 each side),
+        # the time and speaker columns, and each line's own padding (6 each side).
+        self._text_margin = 40 + _fix_columns(preview, lines, fonts) + 12
         self._draw_lines(preview, lines, 0, fonts, folder, color_of)
 
-    @staticmethod
-    def _body_wrap(preview):
-        """Wrap width for a new line: the frame's, once it has been laid out."""
-        width = preview.winfo_width()
-        return 360 if width <= 1 else max(100, width / preview._get_widget_scaling() - 150)
+    def _body_wrap(self):
+        """Wrap length for transcript lines, from the visible width rather than the lines' own
+        frame: that frame widens with its lines, so wrapping to it fed back on itself."""
+        width = self._page._parent_canvas.winfo_width()
+        return 360 if width <= 1 else max(100, width / self._page._get_widget_scaling() - self._text_margin)
+
+    def _rewrap(self, width):
+        """The page was resized (width in physical pixels): rewrap every transcript line, in one
+        handler. A handler per line made a long transcript take seconds to draw."""
+        if width == self._wrap_width or width <= 1 or not self._bodies:
+            return
+        self._wrap_width = width
+        wrap = self._body_wrap()
+        for body in self._bodies:
+            if body.winfo_exists():
+                body.configure(wraplength=wrap)
 
     def _draw_lines(self, preview, lines, start, fonts, folder=None, color_of=lambda _line: None):
         """The whole transcript, a batch at a time; stops if the page was redrawn meanwhile.
@@ -777,9 +810,9 @@ class MeetingsPage:
                 # window when the button came up, and the menu closed itself at once.
                 who.bind("<ButtonRelease-1>", lambda _e, w=who, d=data: self._speaker_menu(w, folder, d))
             body = ctk.CTkLabel(preview, text=said, text_color=theme.TEXT, justify="left", anchor="nw",
-                                font=body_font, wraplength=self._body_wrap(preview), padx=6, corner_radius=6)
+                                font=body_font, wraplength=self._body_wrap(), padx=6, corner_radius=6)
             body.grid(row=row, column=2, sticky="new", pady=(0, 10))
-            _wrap(body, preview, 150)
+            self._bodies.append(body)
             if self._controls is not None and seconds is not None:
                 self._line_widgets.append((seconds, stamp_label, body))
                 for widget in (stamp_label, body):
