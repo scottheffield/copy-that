@@ -5,10 +5,18 @@ from PIL import Image, ImageDraw
 ICON_SIZE = 64
 APP_ICON_COLOR = "#2F6FDE"
 CHECK_COLOR = "#FFD43B"
+DOT_SIZE, DOT_GAP = 230, 36          # Status dot and the gap around it, out of 600
+LOADING_DOT = "#8A8F98"              # Mid gray: reads on light and dark taskbars
+RECORDING_DOT = "#EF4444"
+PROCESSING_DOT = "#F97316"
 
 
-def render_app_icon(size, color=APP_ICON_COLOR):
-    """A round speech bubble with a check: "copy that", heard and confirmed."""
+def render_app_icon(size, color=APP_ICON_COLOR, mark="check", dot=None):
+    """A round speech bubble with a check: "copy that", heard and confirmed.
+
+    mark="alert" draws an exclamation mark in place of the check. dot is a status color
+    for a dot in the lower right, cut out of the bubble with a clear gap so it stands
+    apart on light and dark taskbars alike (#8)."""
     ss = 600  # Draw large so the check stays crisp at 16px
     img = Image.new("RGBA", (ss, ss), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -16,7 +24,17 @@ def render_app_icon(size, color=APP_ICON_COLOR):
     # room for a bigger bubble and check, which matters most at 16px in the tray.
     draw.ellipse([10, 30, 590, 470], fill=color)
     draw.polygon([(140, 400), (140, 585), (320, 450)], fill=color)
-    draw.line([(175, 250), (285, 350), (470, 160)], fill=CHECK_COLOR, width=86, joint="curve")
+    if mark == "alert":
+        draw.line([(280, 105), (280, 270)], fill=CHECK_COLOR, width=86)
+        draw.ellipse([238, 318, 322, 402], fill=CHECK_COLOR)
+    else:
+        draw.line([(175, 250), (285, 350), (470, 160)], fill=CHECK_COLOR, width=86, joint="curve")
+    if dot:
+        # About 6px across at 16px, with a 1px gap: big enough to read at 100% scaling.
+        right = ss - 6
+        left = right - DOT_SIZE
+        draw.ellipse([left - DOT_GAP, left - DOT_GAP, right + DOT_GAP, right + DOT_GAP], fill=(0, 0, 0, 0))
+        draw.ellipse([left, left, right, right], fill=dot)
     return img.resize((size, size), Image.LANCZOS)
 
 
@@ -61,56 +79,30 @@ def save_welcome_bitmap(path, scale=2):
     panel.save(path, format="BMP")
 
 
-def _app_icon_with_status(dot_color, show_x=False):
-    """App icon with a colored status dot in the bottom-right corner."""
-    base = render_app_icon(ICON_SIZE)
-    draw = ImageDraw.Draw(base)
-
-    # Status dot: 20px diameter with 2px white outline
-    dot_d = 20
-    outline_w = 2
-    x2 = ICON_SIZE - 2
-    y2 = ICON_SIZE - 2
-    x1 = x2 - dot_d
-    y1 = y2 - dot_d
-
-    # White outline ring
-    draw.ellipse([x1 - outline_w, y1 - outline_w,
-                  x2 + outline_w, y2 + outline_w], fill="white")
-    # Colored fill
-    draw.ellipse([x1, y1, x2, y2], fill=dot_color)
-
-    if show_x:
-        m = 5
-        draw.line([x1 + m, y1 + m, x2 - m, y2 - m], fill="white", width=2)
-        draw.line([x2 - m, y1 + m, x1 + m, y2 - m], fill="white", width=2)
-
-    return base
-
-
 def icon_loading() -> Image.Image:
-    """App icon with gray status dot — model loading."""
-    return _app_icon_with_status("#808080")
+    """App icon with a gray status dot: the model is loading."""
+    return render_app_icon(ICON_SIZE, dot=LOADING_DOT)
 
 
 def icon_ready() -> Image.Image:
-    """Plain app icon — ready for recording. A green dot would blur into the check."""
+    """Plain app icon: ready for recording. A green dot would blur into the check."""
     return render_app_icon(ICON_SIZE)
 
 
 def icon_recording() -> Image.Image:
-    """App icon with red status dot — microphone active."""
-    return _app_icon_with_status("#EF4444")
+    """App icon with a red status dot: the microphone is on."""
+    return render_app_icon(ICON_SIZE, dot=RECORDING_DOT)
 
 
 def icon_processing() -> Image.Image:
-    """App icon with orange status dot — transcribing (yellow would match the check)."""
-    return _app_icon_with_status("#F97316")
+    """App icon with an orange status dot: transcribing (yellow would match the check)."""
+    return render_app_icon(ICON_SIZE, dot=PROCESSING_DOT)
 
 
 def icon_error() -> Image.Image:
-    """App icon with red status dot + white X — error state."""
-    return _app_icon_with_status("#EF4444", show_x=True)
+    """An exclamation mark in place of the check, with a red dot. The mark is what tells it
+    from recording at 16px, where an X inside the dot was too small to see."""
+    return render_app_icon(ICON_SIZE, mark="alert", dot=RECORDING_DOT)
 
 
 STATE_ICONS = {
