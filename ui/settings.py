@@ -184,6 +184,9 @@ class SettingsWindow:
         self._win.protocol("WM_DELETE_WINDOW", self._close)
         from ui import screen
         screen.place(self._win, 760, 760, 720, 620)  # Shrinks to fit a short or scaled screen
+        self._win.update_idletasks()
+        if screen.adopt_monitor_scaling(self._win):
+            screen.place(self._win, 760, 760, 720, 620)  # Sized again at the monitor's scaling
         self._win.configure(fg_color=_CONTENT_BG)
 
         self._win.update_idletasks()
