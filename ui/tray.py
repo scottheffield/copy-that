@@ -20,7 +20,6 @@ class TrayManager:
     """Manages the system tray icon and context menu."""
 
     def __init__(self, on_toggle, on_quit, on_settings=None, on_history=None, on_open=None,
-                 device="GPU", model="parakeet", hotkey="ctrl+win",
                  on_startup=None, startup_enabled=None,
                  on_meeting=None, meeting_recording=None, on_meetings_folder=None,
                  on_meeting_mute=None, meeting_muted=None, on_panel=None, meeting_line=None):
@@ -38,9 +37,6 @@ class TrayManager:
         self._on_open = on_open
         self._on_startup = on_startup
         self._startup_enabled = startup_enabled
-        self._device = device
-        self._model = model
-        self._hotkey = hotkey
         self._state = "loading"
         self.status = "Loading…"
         self._icon: pystray.Icon | None = None
@@ -90,22 +86,6 @@ class TrayManager:
 
         items.extend([
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                lambda _: f"Device: {self._device}",
-                None,
-                enabled=False,
-            ),
-            pystray.MenuItem(
-                lambda _: f"Model: {self._model}",
-                None,
-                enabled=False,
-            ),
-            pystray.MenuItem(
-                lambda _: f"Hotkey: {self._hotkey}",
-                None,
-                enabled=False,
-            ),
-            pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._on_quit_click),
         ])
 
@@ -148,12 +128,6 @@ class TrayManager:
             # Force menu rebuild so dynamic text updates
             self._icon.menu = self._build_menu()
             self._icon.update_menu()
-
-    def update_info(self, device: str, model: str, hotkey: str):
-        """Update the device/model/hotkey shown in the menu."""
-        self._device = device
-        self._model = model
-        self._hotkey = hotkey
 
     def stop(self):
         """Stop the tray icon."""

@@ -107,9 +107,6 @@ class GUIApp:
             on_settings=lambda: self._events.put(("action", self._show_settings)),
             on_history=lambda: self._events.put(("action", self._show_history)),
             on_open=lambda: self._events.put(("action", self._show_main)),
-            device=config["device"],
-            model=config["model_size"],
-            hotkey=config["hotkey"],
             on_startup=(lambda: self._events.put(("action", self._toggle_startup))) if getattr(sys, "frozen", False) else None,
             startup_enabled=startup.enabled,
             on_meeting=lambda: self._events.put(("action", self._toggle_meeting)),
@@ -286,7 +283,6 @@ class GUIApp:
         if key == "speech:parakeet":
             self._config.update(model_size="parakeet", device=launch_device({**self._config, "model_size": "parakeet"}))
             save_config(self._config)
-            self._tray.update_info(device=self._config["device"], model="parakeet", hotkey=self._config["hotkey"])
             self._restart_engine()
             if is_cleanup_downloaded("4b"):
                 self._download_finished("cleanup:4b", None)
@@ -440,11 +436,6 @@ class GUIApp:
             if data.get("device_lost") and self._config["device"] == "NPU":
                 log("DEVICE_LOST detected — auto-falling back to GPU")
                 self._config["device"] = "GPU"
-                self._tray.update_info(
-                    device="GPU",
-                    model=self._config["model_size"],
-                    hotkey=self._config["hotkey"],
-                )
                 self._engine.fallback_device("GPU")
 
     # -- Audio level polling -----------------------------------------------
@@ -539,12 +530,6 @@ class GUIApp:
         self._overlay.set_show_balloon(self._config.get("show_balloon", True))
         self._overlay.set_balloon_font_size(self._config.get("balloon_font_size", 16))
         self._overlay.set_bubble_position(self._config.get("bubble_position", "cursor"))
-
-        self._tray.update_info(
-            device=self._config["device"],
-            model=self._config["model_size"],
-            hotkey=self._config["hotkey"],
-        )
 
         if model_changed or device_changed or hotkey_changed or runtime_changed or not self._engine_started:
             log("Settings changed — reloading engine...")
