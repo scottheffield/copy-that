@@ -4,6 +4,10 @@
 
 A local Windows dictation app. Dictate into text fields in browsers, email, chat, documents, editors, and other desktop apps, with no destination-specific integration required. It also records meetings in any meeting app and transcribes who said what, all on your PC ([Meetings](#meetings)).
 
+<img src="docs/screenshots/home-dark.png" alt="The Home page: a greeting, words dictated, speaking speed, time saved, a six-month streak heatmap and recent meetings" width="600">
+
+<sub>Screenshots use made-up people, meetings and numbers.</sub>
+
 Speech recognition uses OpenVINO. Parakeet runs entirely on the Intel GPU, which measured faster than placing its encoder on the NPU; Whisper models still prefer the NPU. Optional Qwen3 cleanup also runs on the GPU in the same process. Runtime uses local model files; a model downloads only when you click Download.
 
 On first launch, a welcome window offers the recommended pair: Parakeet for speech (2.5 GB) and Qwen3 4B for Polish (2.3 GB). One click downloads both from Hugging Face, Parakeet first. Dictation starts as soon as Parakeet finishes, and Polish turns on when Qwen finishes. Every model downloads a pinned revision, the build that was tested.
@@ -17,7 +21,7 @@ Developed and tested on Windows 11 with an Intel GPU and NPU. On a PC without an
 3. Open CopyThat from the Start menu. The welcome window downloads the speech and Polish models, about 4.8 GB in total.
 4. Click into any text field, hold Ctrl+Win, speak, and let go.
 
-You don't need Python or PowerShell. Setup offers an unchecked **Start with Windows** option, and you can change it later from the tray menu.
+You don't need Python or PowerShell. Setup offers an unchecked **Start with Windows** option, and you can change it later from the tray icon's right-click menu.
 
 If CopyThat is already running, launching it again exits quietly; use the existing tray icon.
 
@@ -25,7 +29,9 @@ Application files default to `%LOCALAPPDATA%\Programs\CopyThat`. Config, models,
 
 ## Use
 
-The app lives in the system tray. The floating pill is hidden while idle and shows recording, processing, and brief results.
+The app lives in the system tray. The floating pill is hidden while idle. While you dictate it opens as a bubble under the text cursor, with a timer, a level meter, and your words as you speak, then shows processing and brief results.
+
+<img src="docs/screenshots/pill-dark.png" alt="The recording bubble under the text cursor in a draft, showing a timer, a level meter and the words heard so far" width="560">
 
 | Gesture | Action |
 | --- | --- |
@@ -38,11 +44,19 @@ The app lives in the system tray. The floating pill is hidden while idle and sho
 
 Up to three unfinished takes can overlap. Processing and pasting remain ordered. Each pasted take ends with a space so the next take starts a new word. Existing trailing whitespace is preserved and auto-submit omits the added space. History keeps the transcript without the added separator. Recordings stop at 5 minutes by default, with a low double pluck 15 seconds before the limit. Audio cues: a pluck once the microphone is actually delivering audio, a lower pluck on release, and a rising two-note pluck when text is pasted. Silence detection rejects takes without enough detected speech before recognition.
 
+**Tray panel.** Left-click the tray icon for a small panel above it. It has **Record meeting** (with **Mute mic** while one records), your words, speaking speed and streak, and your last three meetings, which you can rename in place or open. Escape or a click elsewhere closes it. Right-click the icon for the menu.
+
+<img src="docs/screenshots/tray-dark.png" alt="The tray panel: Record meeting, words, wpm and streak, and the last three meetings with Folder and Open" width="320">
+
+**Home.** **Open CopyThat** opens the main window on Home. Home shows the words you've dictated, your speaking speed, the time saved compared with typing at 40 wpm, your streak of days with dictation, a six-month heatmap, and your recent meetings. A weekend without dictation doesn't break a streak. The stats are numbers only, kept in `stats.json` on this PC, never the text. Turn them off or reset them in Settings > General.
+
 ## Meetings
 
-Click **Record meeting** at the top of the Meetings page, or in the tray menu, to record a call, and **Stop** when it ends. CopyThat records two tracks: your microphone, labeled "Me", and whatever the laptop plays, labeled "Others". It works with any meeting app. Nothing joins the call, and nothing is uploaded. The output track records the Windows default speaker, so set your meeting app's speaker to Default.
+Click **Record meeting** on Home, the Meetings page, or the tray panel, or choose it in the tray menu, to record a call, and **Stop** when it ends. CopyThat records two tracks: your microphone, labeled "Me", and whatever the laptop plays, labeled "Others". It works with any meeting app. Nothing joins the call, and nothing is uploaded. The output track records the Windows default speaker, so set your meeting app's speaker to Default.
 
-Most of the meeting is transcribed during the call, so the transcript is written a few seconds after Stop. Dictation keeps working during a meeting and always goes first. Your dictated words stay out of the meeting transcript; turn that off with **Leave dictation out of meeting transcripts** in Settings. The mic button on the meeting chip (or **Mute my mic in the meeting** in the tray menu) mutes your side while the other side keeps recording. A mute longer than 5 seconds is marked in the transcript.
+Most of the meeting is transcribed during the call, so the transcript is written a few seconds after Stop. Dictation keeps working during a meeting and always goes first. Your dictated words stay out of the meeting transcript; turn that off with **Leave dictation out of meeting transcripts** in Settings. The mic button on the meeting chip, **Mute mic** in the tray panel, or **Mute my mic in the meeting** in the tray menu mutes your side while the other side keeps recording. A mute longer than 5 seconds is marked in the transcript.
+
+<img src="docs/screenshots/meeting-dark.png" alt="A meeting's page: named speakers in their own colors, the line being played highlighted, and the player" width="600">
 
 **Speakers.** After the transcript is written, CopyThat finds the different voices on the other side and labels them Speaker 1, Speaker 2, and so on, numbered by who speaks first. A voice with only a few words is merged into the speakers around it. When the laptop plays nothing for the whole recording, as in an in-person meeting, everyone is on the microphone track, labeled "Speaker", and the voices there are separated instead. On a long meeting this takes a few minutes, with progress on the meeting's page. Turn it off with **Label speakers in meeting transcripts** in Settings > Meetings.
 
@@ -66,7 +80,7 @@ Recording other people may require their consent, and the rules vary by place. F
 
 Right-click the tray icon and choose **Settings**, or click **Settings** at the bottom of the main window's sidebar:
 
-The sidebar holds **Meetings**, **Dictation**, and **Dictionary**, with **Settings** at the bottom. Settings has four tabs: **General**, **Models**, **Meetings**, and **Advanced**. In General, **Appearance** offers **System** (the default), **Light**, and **Dark**. Click **Apply changes** to save your choice. System follows the Windows app appearance while CopyThat is running; manual choices override it. Appearance changes do not reload the speech models. The recording pill keeps the same layout and controls in both themes. Routine status messages stay in the app instead of raising a Windows toast.
+The sidebar holds **Home**, **Meetings**, **Dictation**, and **Dictionary**, with **Settings** at the bottom. Settings has four tabs: **General**, **Models**, **Meetings**, and **Advanced**. In General, **Appearance** offers **System** (the default), **Light**, and **Dark**. **Highlight color** picks the accent: blue (the default), violet, teal, or amber. Click **Apply changes** to save your choice. System follows the Windows app appearance while CopyThat is running; manual choices override it. Appearance changes do not reload the speech models. The recording pill keeps the same layout and controls in both themes. Routine status messages stay in the app instead of raising a Windows toast.
 
 - **Microphone** chooses a particular input device or follows the Windows default. A selected microphone is remembered by its name and audio API. If it disappears, select another microphone.
 - **Speech recognition** and **Polish** (in Settings > Models) use the same model cards. Each shows Installed, a Download button with its size, or download progress with Cancel. Only installed models can be selected; click Apply to load one. The speech model and Polish model are independent. After you switch away from a model, CopyThat offers to delete it; installed models that aren't in use also have a Remove action.
@@ -79,7 +93,7 @@ The sidebar holds **Meetings**, **Dictation**, and **Dictionary**, with **Settin
 - **Press Enter after pasting** is optional and submits text wherever Enter normally submits it. It is off by default.
 - **Issue keys** are set in `config.json`, not Settings. With `"issue_keys": ["OPS"]`, saying "OPS twenty three" writes `OPS-23`. The list is empty by default.
 
-**History** retains the latest 20 completed results in memory and provides **Copy final** and **Copy raw**. If the destination window changes, or the destination is one of this app's own windows, automatic paste is skipped and the result remains here; press Shift+Alt+Z in the intended field to paste it. History resets when the app exits or its engine reloads.
+The **Dictation** page (**Dictation history** in the tray menu) keeps the latest 20 completed results in memory, with **Copy final** and **Copy raw** for each. If the destination window changes, or the destination is one of this app's own windows, automatic paste is skipped and the result remains here; press Shift+Alt+Z in the intended field to paste it. The list resets when the app exits or its engine reloads.
 
 The destination check identifies a window and process. Moving between fields within the same window cannot be detected. Pasting into an app running as administrator is not supported. Clipboard preservation currently saves text only, so copying an image or file before dictating can lose that clipboard content. A newer user copy is left alone.
 
@@ -220,6 +234,8 @@ Replay opt-in take logs after adding checked `reference.txt` and, optionally, `e
 ```
 
 Synthetic smoke results validate execution, not accuracy on your voice.
+
+`scripts/readme_screenshots.py` retakes the README screenshots from the real windows, filled with made-up data in a throwaway data folder. Windows open on screen while it runs, so leave the mouse alone.
 
 ## Contributing and security
 
