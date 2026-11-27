@@ -364,10 +364,14 @@ class FakeMeetings:
 
 
 def page_texts(widget):
+    """Label texts, plus each tab-separated piece of each line of a text area (a transcript)."""
+    import tkinter as tk
     out = []
     for child in widget.winfo_children():
         if isinstance(child, ctk.CTkLabel):
             out.append(child.cget("text"))
+        elif isinstance(child, tk.Text):
+            out.extend(piece for line in child.get("1.0", "end").splitlines() for piece in line.split("\t"))
         out.extend(page_texts(child))
     return out
 
@@ -680,13 +684,14 @@ def test_speaker_menu_adds_moves_and_renames(root, tmp_path):
     root.update()
     assert "Others \u25be" in page_texts(window._pages["Meetings"])
     # The menu opens on the release: opened on the press, it lost focus and closed at once.
-    who = next(w for w in all_widgets(window._pages["Meetings"])
-               if isinstance(w, ctk.CTkLabel) and w.cget("text") == "Others \u25be")
-    assert who._label.bind("<ButtonRelease-1>") and not who._label.bind("<Button-1>")
+    view = page._transcript
+    others = view.speakers.index("Others \u25be")
+    assert view.text.tag_bind(f"who{others}", "<ButtonRelease-1>", None)
+    assert not view.text.tag_bind(f"who{others}", "<Button-1>", None)
 
     def menu_for(text):
         row = next(r for r in page._rows if r["text"] == text)
-        page._speaker_menu(page._page, folder, row)
+        page._speaker_menu(page._transcript.speaker_point(page._rows.index(row)), folder, row)
         root.update()
         entry = next(w for w in all_widgets(page._menu) if isinstance(w, ctk.CTkEntry))
         return entry
@@ -789,13 +794,14 @@ def test_meeting_page_plays_from_a_clicked_line_and_saves_the_audio(root, tmp_pa
     root.update()
     texts = page_texts(window._pages["Meetings"])
     assert "00:00 / 00:04" in texts
-    assert len(page._line_widgets) == 3
+    view = page._transcript
+    assert len(view.starts) == 3
     # Clicking the second line's words plays from just before it, and lights it.
-    _, _, body = page._line_widgets[1]
-    page._play_from(page._line_widgets[1][0])
+    assert view.text.tag_bind("say1", "<ButtonRelease-1>", None)
+    page._play_from(view.starts[1][0])
     assert page._player.playing and playback.holding(folder)
     assert page._player.position == 0.7
-    assert page._lit == 1 and body.cget("fg_color") == theme.SELECTED
+    assert view.lit == 1 and "Second line." in view.lit_text()
     # Dictation pauses it, keeping the place; leaving the page also pauses.
     provider.dictation = True
     page._play_tick()
