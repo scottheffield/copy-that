@@ -7,8 +7,8 @@ import customtkinter as ctk
 
 import meetings
 from ui import theme
+from ui.transcript import TranscriptView
 
-LINES_PER_BATCH = 25  # Transcript lines drawn per idle moment, so a long meeting opens without freezing
 SEARCH_DELAY_MS = 250
 STATUS_TEXT = {
     "recording": "Recording",
@@ -141,28 +141,6 @@ def _shorten_path(path, font, width):
     return "…" + last
 
 
-def _wrap(label, frame, margin=24):
-    """Wrap label to frame's width. Event widths are physical pixels; CTk scales wraplength."""
-    frame.bind("<Configure>", lambda e: label.configure(
-        wraplength=max(100, e.width / label._get_widget_scaling() - margin)), add="+")
-
-
-def _fix_columns(preview, lines, fonts):
-    """Size the time and speaker columns for the widest entry in the whole transcript, so they
-    don't grow as later lines are drawn and squeeze or clip the names drawn before them.
-    Returns their total width, unscaled."""
-    stamp_font, speaker_font, _body = fonts
-    scale = preview._get_widget_scaling()
-    pad = 10 + 2  # The grid's padx, plus a little room
-    widest = lambda font, texts: max((font.measure(text) for text in texts), default=0)
-    stamps = {line[0] for line in lines}
-    names = {line[1] + (" ▾" if line[3] else "") for line in lines}
-    columns = [widest(stamp_font, stamps) + pad, widest(speaker_font, names) + pad]
-    for column, width in enumerate(columns):
-        preview.grid_columnconfigure(column, minsize=round(width * scale))
-    return sum(columns)
-
-
 class MeetingsPage:
     """Renders into page (a plain frame): a fixed header (title, Record meeting, search,
     Folder menu) over a scrolling body. provider offers retranscribe_meeting(folder),
@@ -177,8 +155,7 @@ class MeetingsPage:
                                             scrollbar_button_color=theme.BORDER,
                                             scrollbar_button_hover_color=theme.MUTED)
         self._page.pack(fill="both", expand=True)
-        self._bodies, self._wrap_width, self._text_margin = [], None, 150
-        self._page._parent_canvas.bind("<Configure>", lambda e: self._rewrap(e.width), add="+")
+        self._transcript = None  # The detail view's TranscriptView, in place of the scrolling page
         self._record = None
         self._tick_id = None
         self._meetings_dir = meetings_dir  # Callable: the folder can change in Settings
@@ -193,8 +170,6 @@ class MeetingsPage:
         self._progress_id = None
         self._player = None   # playback.Player for the meeting shown, created on first play (#63)
         self._controls = None  # The player bar's widgets while it is on the page
-        self._line_widgets = []  # (start seconds, stamp label, body label) of each drawn line
-        self._lit = None      # Index in _line_widgets of the line being played
         self._play_id = None
         self._export = None   # {"folder", "fraction", "done", "error"} while audio is being saved
 
@@ -210,12 +185,9 @@ class MeetingsPage:
     def render(self, keep_scroll=False):
         """Rebuild whichever view is showing, e.g. after a meeting finishes.
         keep_scroll: stay where the reader was (after naming a speaker), once lines are drawn."""
-        self._scroll_to = None
-        if keep_scroll:
-            try:
-                self._scroll_to = self._page._parent_canvas.yview()[0]
-            except Exception:
-                pass
+        scroll_to = None
+        if keep_scroll and self._transcript is not None and self._transcript.exists():
+            scroll_to = self._transcript.yview()[0]
         self.save_pending()
         if self._detail is not None and not (self._detail / "meta.json").exists():
             self._detail = None  # Deleted outside the app
@@ -223,25 +195,35 @@ class MeetingsPage:
             self._close_player()  # Left the meeting
         for child in self._page.winfo_children():
             child.destroy()
-        self._controls, self._line_widgets, self._lit = None, [], None
-        self._bodies, self._wrap_width = [], None
+        if self._transcript is not None:
+            self._transcript.destroy()
+            self._transcript = None
+        self._controls = None
         self._results = None
         self._stop_progress()
-        # Both views pin a header above the scrolling body: the list's title, Record, and
-        # search; a meeting's title, actions, and player (#63).
-        self._page.pack_forget()  # Re-pack so the header sits above the scrolling body
+        # Both views pin a header above the body: the list's title, Record, and search over the
+        # scrolling list; a meeting's title, actions, and player (#63) over its transcript.
+        self._page.pack_forget()  # Re-pack so the header sits above the body
         self._header.pack(fill="x")
-        self._page.pack(fill="both", expand=True)
         if self._detail is None:
+            self._page.pack(fill="both", expand=True)
             self._render_header()
             self._render_list()
+            try:
+                self._page._parent_canvas.yview_moveto(0)
+            except Exception:
+                pass
         else:
             self._render_detail(self._detail)
-        try:
-            self._page._parent_canvas.yview_moveto(0)
-        except Exception:
-            pass
+            if scroll_to is not None and self._transcript is not None:
+                self._transcript.text.update_idletasks()
+                self._transcript.yview_moveto(scroll_to)
         self._start_progress()
+
+    def refresh_theme(self):
+        """Light or dark changed: the transcript is plain Tk, so it repaints itself."""
+        if self._transcript is not None and self._transcript.exists():
+            self._transcript.paint()
 
     def _progress(self, folder):
         getter = getattr(self._provider, "meeting_progress", None)
@@ -655,6 +637,7 @@ class MeetingsPage:
         item = self._item(folder)
         if item is None:
             self._detail = None
+            self._page.pack(fill="both", expand=True)
             self._render_header()
             self._render_list()
             return
@@ -741,92 +724,29 @@ class MeetingsPage:
             message = "Re-transcribing… The transcript below is the previous one until this finishes."
         if text and progress and progress[0] != "transcribing":
             message = "Finding who spoke. The lines below get Speaker 1, Speaker 2 and so on when it's done."
-        if message and (speakers_stopped or not (text and item["status"] == "done" and not progress)):
-            note = ctk.CTkLabel(page, text=message, text_color=theme.MUTED, justify="left", anchor="w")
-            note.pack(fill="x", padx=20, pady=(0, 12))
-            _wrap(note, page, 40)
-        if not text:
-            return
-        rows = meetings.speaker_rows(folder) if item["status"] == "done" else None
-        if rows is not None:
-            # Lines from the saved word times, so a speaker can be named or a line moved (#44).
-            editable = not busy
-            lines = [(meetings.clock(r["start"]), r["name"], r["text"], r if editable else None, r["start"])
-                     for r in rows]
-            colors = speaker_colors(meetings.speakers_in(rows))
-            color_of = lambda row_line: colors.get(row_line[3]["label"]) if row_line[3] else None
-        else:
-            lines = [(*line, None, clock_seconds(line[0])) for line in meetings.transcript_lines(text)]
-            colors, color_of = {}, lambda _line: None
-        if not lines:
-            ctk.CTkLabel(page, text="No speech was recognized.", text_color=theme.MUTED).pack(anchor="w", padx=20)
-            return
-        preview = ctk.CTkFrame(page, fg_color="transparent")
-        preview.pack(fill="x", padx=20, pady=(0, 16))
-        preview.grid_columnconfigure(2, weight=1)
-        fonts = (ctk.CTkFont(size=13), ctk.CTkFont(size=14, weight="bold"), ctk.CTkFont(size=15))
-        self._rows, self._colors = rows or [], colors
-        # Lines wrap to what's left of the visible width after the page margins (20 each side),
-        # the time and speaker columns, and each line's own padding (6 each side).
-        self._text_margin = 40 + _fix_columns(preview, lines, fonts) + 12
-        self._draw_lines(preview, lines, 0, fonts, folder, color_of)
-
-    def _body_wrap(self):
-        """Wrap length for transcript lines, from the visible width rather than the lines' own
-        frame: that frame widens with its lines, so wrapping to it fed back on itself."""
-        width = self._page._parent_canvas.winfo_width()
-        return 360 if width <= 1 else max(100, width / self._page._get_widget_scaling() - self._text_margin)
-
-    def _rewrap(self, width):
-        """The page was resized (width in physical pixels): rewrap every transcript line, in one
-        handler. A handler per line made a long transcript take seconds to draw."""
-        if width == self._wrap_width or width <= 1 or not self._bodies:
-            return
-        self._wrap_width = width
-        wrap = self._body_wrap()
-        for body in self._bodies:
-            if body.winfo_exists():
-                body.configure(wraplength=wrap)
-
-    def _draw_lines(self, preview, lines, start, fonts, folder=None, color_of=lambda _line: None):
-        """The whole transcript, a batch at a time; stops if the page was redrawn meanwhile.
-        lines: (time, speaker, text, row, start seconds) where row (from speaker_rows) makes
-        the speaker a menu for naming and moving; None leaves it plain. With a player bar on
-        the page, clicking a line's time or words plays from there (#63)."""
-        if not preview.winfo_exists():
-            return
-        stamp_font, speaker_font, body_font = fonts
-        end = min(len(lines), start + LINES_PER_BATCH)
-        for row in range(start, end):
-            stamp, speaker, said, data, seconds = lines[row]
-            stamp_label = ctk.CTkLabel(preview, text=stamp, text_color=theme.MUTED, font=stamp_font, anchor="nw")
-            stamp_label.grid(row=row, column=0, sticky="nw", padx=(0, 10), pady=(0, 10))
-            color = color_of(lines[row]) or (theme.ACCENT if speaker == "Me" else theme.MUTED)
-            who = ctk.CTkLabel(preview, text=speaker + (" ▾" if data else ""), anchor="nw",
-                               font=speaker_font, text_color=color)
-            who.grid(row=row, column=1, sticky="nw", padx=(0, 10), pady=(0, 10))
-            if data:
-                who.configure(cursor="hand2")
-                # On release, like a button: opened on the press, Windows gave focus back to the
-                # window when the button came up, and the menu closed itself at once.
-                who.bind("<ButtonRelease-1>", lambda _e, w=who, d=data: self._speaker_menu(w, folder, d))
-            body = ctk.CTkLabel(preview, text=said, text_color=theme.TEXT, justify="left", anchor="nw",
-                                font=body_font, wraplength=self._body_wrap(), padx=6, corner_radius=6)
-            body.grid(row=row, column=2, sticky="new", pady=(0, 10))
-            self._bodies.append(body)
-            if self._controls is not None and seconds is not None:
-                self._line_widgets.append((seconds, stamp_label, body))
-                for widget in (stamp_label, body):
-                    widget.configure(cursor="hand2")
-                    widget.bind("<ButtonRelease-1>", lambda _e, s=seconds: self._play_from(s))
+        if not (message and (speakers_stopped or not (text and item["status"] == "done" and not progress))):
+            message = None
+        lines, colors = [], {}
+        if text:
+            rows = meetings.speaker_rows(folder) if item["status"] == "done" else None
+            if rows is not None:
+                # Lines from the saved word times, so a speaker can be named or a line moved (#44).
+                editable = not busy
+                lines = [(meetings.clock(r["start"]), r["name"], r["text"], r if editable else None, r["start"])
+                         for r in rows]
+                colors = speaker_colors(meetings.speakers_in(rows))
+            else:
+                lines = [(*line, None, clock_seconds(line[0])) for line in meetings.transcript_lines(text)]
+            self._rows, self._colors = rows or [], colors
+            if not lines:
+                message = "No speech was recognized."
+        view = TranscriptView(self._outer, on_speaker=lambda row, at: self._speaker_menu(at, folder, row),
+                              on_play=self._play_from)
+        view.pack(fill="both", expand=True, pady=(0, 8))
+        view.show(message, lines, colors, playable=self._controls is not None)
+        self._transcript = view
         if self._player is not None and (self._player.playing or self._player.position):
-            self._highlight(scroll=False)  # The playing line may be in this batch
-        if end < len(lines):
-            preview.after(1, lambda: self._draw_lines(preview, lines, end, fonts, folder, color_of))
-        elif getattr(self, "_scroll_to", None) is not None:
-            preview.update_idletasks()
-            self._page._parent_canvas.yview_moveto(self._scroll_to)
-            self._scroll_to = None
+            self._highlight(scroll=False)
 
     def _rename(self, folder, title, item):
         title = " ".join(title.split())
@@ -1022,43 +942,11 @@ class MeetingsPage:
     def _highlight(self, scroll=True):
         """Mark the line being played, and keep it in view while playing."""
         import bisect
-        player = self._player
-        if player is None or not self._line_widgets:
+        player, view = self._player, self._transcript
+        if player is None or view is None or not view.exists() or not view.starts:
             return
-        starts = [line[0] for line in self._line_widgets]
-        index = bisect.bisect_right(starts, player.position + 0.35) - 1
-        if index == self._lit:
-            return
-        if self._lit is not None and self._lit < len(self._line_widgets):
-            _, stamp, body = self._line_widgets[self._lit]
-            if stamp.winfo_exists():
-                stamp.configure(text_color=theme.MUTED)
-                body.configure(fg_color="transparent")
-        self._lit = index if index >= 0 else None
-        if self._lit is None:
-            return
-        _, stamp, body = self._line_widgets[self._lit]
-        if not stamp.winfo_exists():
-            return
-        stamp.configure(text_color=theme.ACCENT)
-        body.configure(fg_color=theme.SELECTED)
-        if scroll and player.playing:
-            self._scroll_into_view(body)
-
-    def _scroll_into_view(self, widget):
-        """Scroll so widget sits a third of the way down, if it is out of view."""
-        try:
-            canvas = self._page._parent_canvas
-            total = self._page.winfo_height()
-            if total <= 1:
-                return
-            y = widget.winfo_rooty() - self._page.winfo_rooty()
-            top, bottom = canvas.yview()
-            if top * total <= y and y + widget.winfo_height() <= bottom * total:
-                return
-            canvas.yview_moveto(max(0.0, (y - canvas.winfo_height() / 3) / total))
-        except Exception:
-            pass
+        index = bisect.bisect_right([start for start, _ in view.starts], player.position + 0.35) - 1
+        view.light(index if index >= 0 else None, scroll=scroll and player.playing)
 
     # -- Save audio (#63) ---------------------------------------------------------
 
@@ -1120,9 +1008,10 @@ class MeetingsPage:
 
     # -- Speaker menu (#44) -----------------------------------------------------
 
-    def _speaker_menu(self, anchor, folder, row):
-        """A popover under a line's speaker: search or add a speaker, rename this one
-        (every line), move this line to another, or move all of this speaker's lines."""
+    def _speaker_menu(self, at, folder, row):
+        """A popover under a line's speaker, at (x, y) on screen: search or add a speaker,
+        rename this one (every line), move this line to another, or move all of this
+        speaker's lines."""
         import tkinter as tk
         self._close_menu()
         win = tk.Toplevel(self._outer)
@@ -1257,8 +1146,7 @@ class MeetingsPage:
         entry.bind("<Return>", enter)
         fill()
         win.update_idletasks()
-        x = anchor.winfo_rootx()
-        y = anchor.winfo_rooty() + anchor.winfo_height() + 2
+        x, y = at
         win.geometry(f"{win.winfo_reqwidth()}x{win.winfo_reqheight()}+{max(0, x)}+{y}")
         win.bind("<Escape>", lambda _e: self._close_menu())
         win.bind("<FocusOut>", lambda _e: win.after(150, self._close_if_unfocused))

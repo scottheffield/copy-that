@@ -719,6 +719,8 @@ class SettingsWindow:
         if self.is_open:
             theme.title_bar(self._win)
             self._paint_tabs()
+            if self._meetings_page:
+                self._meetings_page.refresh_theme()
 
     def _card(self, kind, key, parent, title, summary, variable, value, size_gb=None):
         """Add a model card. Downloadable cards (key set) track download state."""
