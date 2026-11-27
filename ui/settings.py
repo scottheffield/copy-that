@@ -447,9 +447,9 @@ class SettingsWindow:
         )
         self._mic_dropdown.pack(padx=20, pady=(4, 0), fill="x")
 
-        # --- Balloon font size ---
+        # --- Bubble text size ---
         ctk.CTkLabel(
-            scroll, text="Balloon font size", fg_color="transparent",
+            scroll, text="Bubble text size", fg_color="transparent",
             font=ctk.CTkFont(size=13, weight="bold"), text_color=_SECTION_TEXT,
         ).pack(**pad, anchor="w")
         font_sizes = ["12", "14", "16", "18", "20", "24"]
@@ -460,9 +460,9 @@ class SettingsWindow:
         )
         self._font_size_dropdown.pack(padx=20, pady=(4, 0), fill="x")
 
-        # --- Recording bubble position ---
+        # --- Bubble position ---
         ctk.CTkLabel(
-            scroll, text="Recording bubble", fg_color="transparent",
+            scroll, text="Bubble position", fg_color="transparent",
             font=ctk.CTkFont(size=13, weight="bold"), text_color=_SECTION_TEXT,
         ).pack(**pad, anchor="w")
         self._bubble_choices = {
@@ -510,65 +510,65 @@ class SettingsWindow:
             hover_color=_ACCENT_HOVER, text_color=_SECTION_TEXT,
             checkmark_color=theme.ON_ACCENT,
         )
+        def checkboxes(frame, rows):
+            """A short label for each checkbox, with any detail on a muted line under it."""
+            for label, variable, hint in rows:
+                ctk.CTkCheckBox(frame, text=label, variable=variable, **chk_opts).pack(
+                    anchor="w", pady=(4, 0 if hint else 4))
+                if hint:
+                    # Lined up with the label, past the 24 px box and its gap.
+                    ctk.CTkLabel(frame, text=hint, text_color=_DESC_TEXT, font=ctk.CTkFont(size=12),
+                                 anchor="w", justify="left", height=18).pack(anchor="w", padx=(30, 0), pady=(0, 4))
+
         self._beep_var = ctk.BooleanVar(value=self._config.get("beep_on_start", True))
-        ctk.CTkCheckBox(
-            toggles_frame, text="Sound cues",
-            variable=self._beep_var, **chk_opts,
-        ).pack(anchor="w", pady=2)
-
         self._media_var = ctk.BooleanVar(value=self._config.get("pause_media", True))
-        ctk.CTkCheckBox(
-            toggles_frame, text="Pause media while dictating",
-            variable=self._media_var, **chk_opts,
-        ).pack(anchor="w", pady=2)
-
-        self._enter_var =ctk.BooleanVar(value=self._config.get("auto_enter", False))
-        ctk.CTkCheckBox(
-            toggles_frame, text="Press Enter after paste (auto-submit)",
-            variable=self._enter_var, **chk_opts,
-        ).pack(anchor="w", pady=2)
-
+        self._enter_var = ctk.BooleanVar(value=self._config.get("auto_enter", False))
         self._space_var = ctk.BooleanVar(value=self._config.get("append_space", True))
-        ctk.CTkCheckBox(
-            toggles_frame, text="Add a space after dictation (except auto-submit)",
-            variable=self._space_var, **chk_opts,
-        ).pack(anchor="w", pady=2)
-
         self._balloon_var = ctk.BooleanVar(value=self._config.get("show_balloon", True))
-        ctk.CTkCheckBox(
-            toggles_frame, text="Show text bubble (live and result)",
-            variable=self._balloon_var, **chk_opts,
-        ).pack(anchor="w", pady=2)
+        checkboxes(toggles_frame, (
+            ("Play sounds for start, stop, and other key events", self._beep_var,
+             "Pasting, the time-limit warning, and meeting start and stop."),
+            ("Pause music and videos while dictating", self._media_var, None),
+            ("Press Enter after pasting", self._enter_var, "Sends the message in chat apps."),
+            ("Add a space after each dictation", self._space_var, "Not when Enter is pressed after pasting."),
+            ("Show your words in the bubble", self._balloon_var, "Live while you speak, then the result."),
+        ))
 
         meeting_frame = ctk.CTkFrame(self._pages["Meeting settings"], fg_color="transparent")
         meeting_frame.pack(padx=20, pady=(10, 10), fill="x")
         self._skip_dictation_var = ctk.BooleanVar(value=self._config.get("meeting_skip_dictation", True))
         self._speakers_var = ctk.BooleanVar(value=self._config.get("meeting_speakers", True))
         self._compress_var = ctk.BooleanVar(value=self._config.get("meeting_compress_audio", True))
-        for label, variable in (
-            ("Leave dictation out of meeting transcripts", self._skip_dictation_var),
-            ("Label speakers in meeting transcripts", self._speakers_var),
-            ("Compress meeting audio after transcribing (off keeps the original WAV files)", self._compress_var),
-        ):
-            ctk.CTkCheckBox(meeting_frame, text=label, variable=variable, **chk_opts).pack(anchor="w", pady=2)
+        checkboxes(meeting_frame, (
+            ("Leave dictation out of meeting transcripts", self._skip_dictation_var, None),
+            ("Label speakers in meeting transcripts", self._speakers_var, None),
+            ("Compress meeting audio after transcribing", self._compress_var,
+             "Several times smaller. Off keeps the original WAV files."),
+        ))
 
         self._literal_var = ctk.BooleanVar(value=self._config.get("literal_mode", False))
         self._commands_var = ctk.BooleanVar(value=self._config.get("spoken_commands", False))
         self._log_var = ctk.BooleanVar(value=self._config.get("take_log_enabled", False))
         toggles_frame = ctk.CTkFrame(self._pages["Advanced"], fg_color="transparent")
         toggles_frame.pack(padx=20, pady=18, fill="x")
-        for label, variable in (
-            ("Literal mode (raw recognized text)", self._literal_var),
-            ("Spoken commands (new paragraph, scratch that)", self._commands_var),
-            ("Save takes locally for replay (audio and text)", self._log_var),
-        ):
-            ctk.CTkCheckBox(toggles_frame, text=label, variable=variable, **chk_opts).pack(anchor="w", pady=2)
+        checkboxes(toggles_frame, (
+            ("Literal mode", self._literal_var, "Pastes exactly what was heard: no dictionary, rules or Polish."),
+            ("Spoken commands", self._commands_var,
+             "Experimental. Say “new line”, “new paragraph” or “scratch that”."),
+            ("Save takes for replay", self._log_var, "Keeps each take's audio and text on this PC, for testing."),
+        ))
         from version import label as version_label
         ctk.CTkLabel(self._pages["Advanced"], text=f"CopyThat {version_label()}",
                      text_color=_DESC_TEXT).pack(padx=20, pady=(4, 18), anchor="w")
         scroll = self._pages["Dictionary"]
-        ctk.CTkLabel(scroll, text="One spoken phrase = replacement per line",
+        ctk.CTkLabel(scroll, text="One entry per line: what you say = how it should be written.",
                      text_color=_SECTION_TEXT).pack(**pad, anchor="w")
+        ctk.CTkLabel(scroll, text="copy that = CopyThat\nacme corp = ACME Corp.", text_color=_SECTION_TEXT,
+                     fg_color=theme.SURFACE, corner_radius=6, anchor="w", justify="left", padx=12,
+                     font=ctk.CTkFont(family="Consolas", size=13)).pack(padx=20, pady=(6, 4), fill="x")
+        ctk.CTkLabel(scroll, text="Matches whole words and ignores case. The longest match wins, "
+                     "and a replacement is never replaced again.", text_color=_DESC_TEXT, anchor="w",
+                     justify="left", wraplength=480).pack(padx=20, pady=(0, 8), anchor="w", fill="x")
         self._dictionary_box = ctk.CTkTextbox(
             scroll, height=280, fg_color=_INPUT_BG, text_color=_SECTION_TEXT,
             border_color=_INPUT_BORDER, border_width=1)
