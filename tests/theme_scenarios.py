@@ -403,6 +403,13 @@ def test_sidebar_settings_tabs_and_meetings_back_to_list(root, tmp_path):
     window._nav_buttons["Meetings"].invoke()
     texts = page_texts(window._pages["Meetings"])
     assert "Design review" in texts and "Let's start with onboarding." not in texts
+    # So does Meetings after leaving a meeting open for another page.
+    window._meetings_page.show_detail(review)
+    window._nav_buttons["Dictation"].invoke()
+    window._nav_buttons["Meetings"].invoke()
+    texts = page_texts(window._pages["Meetings"])
+    assert window._meetings_page._detail is None and "Design review" in texts
+    assert "Let's start with onboarding." not in texts
     window._win.destroy()
 
 

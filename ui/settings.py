@@ -599,7 +599,7 @@ class SettingsWindow:
 
     def _nav_button(self, parent, name):
         """A sidebar entry with its icon. Settings opens the last tab used.
-        Meetings, clicked while showing a meeting, goes back to the list."""
+        Meetings always opens the list, even from a meeting or after leaving one open."""
         from ui.icons import GLYPHS, render_glyph
         images = {}
         for state, pair in (("normal", theme.TEXT), ("selected", theme.ACCENT)):
@@ -661,6 +661,8 @@ class SettingsWindow:
             self._meetings_page.save_pending()
             if name != "Meetings":
                 self._meetings_page.stop_playback()
+        elif self._meetings_page and name == "Meetings":
+            self._meetings_page.forget_detail()  # Coming from another page: the list, not the meeting left open
         if name not in self._pages:
             name = FIRST_PAGE
         nav = "Settings" if name in SETTINGS_TABS else name
