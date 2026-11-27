@@ -100,15 +100,12 @@ class GUIApp:
         self._chip_poll_id = None
 
         # Tray
-        import startup
         self._tray = TrayManager(
             on_toggle=lambda: self._events.put(("action", self._engine.toggle_recording)),
             on_quit=lambda: self._events.put(("action", self._quit)),
             on_settings=lambda: self._events.put(("action", self._show_settings)),
             on_history=lambda: self._events.put(("action", self._show_history)),
             on_open=lambda: self._events.put(("action", self._show_main)),
-            on_startup=(lambda: self._events.put(("action", self._toggle_startup))) if getattr(sys, "frozen", False) else None,
-            startup_enabled=startup.enabled,
             on_meeting=lambda: self._events.put(("action", self._toggle_meeting)),
             meeting_recording=self._meeting_recording,
             on_meetings_folder=lambda: self._events.put(("action", self._open_meetings_folder)),
@@ -466,9 +463,16 @@ class GUIApp:
         self._settings_win = SettingsWindow(
             self._root, self._config, devices, on_apply=self._on_settings_apply, models=self,
             history=lambda: self._engine.history, on_page_change=self._on_page_change, meetings=self,
-            stats=self._stats,
+            stats=self._stats, startup=self._startup_provider(),
         )
         self._root.after(0, lambda: self._settings_win.show(page))
+
+    @staticmethod
+    def _startup_provider():
+        """Start with Windows for Settings: (is on, turn on/off), or no setter outside the
+        installed app, where there is no executable for Windows to start."""
+        import startup
+        return startup.enabled, startup.set_enabled if getattr(sys, "frozen", False) else None
 
     def _show_settings(self):
         self._show_main("Settings")  # The last settings tab used
@@ -1081,14 +1085,6 @@ class GUIApp:
             log(f"Could not show a notification ({type(error).__name__})")
 
     # -- Quit --------------------------------------------------------------
-
-    def _toggle_startup(self):
-        import startup
-        try:
-            startup.set_enabled(not startup.enabled())
-            self._tray._icon.update_menu()
-        except OSError:
-            self._tray._icon.notify("Could not change Start with Windows.", "CopyThat")
 
     def _quit(self):
         self._closing = True

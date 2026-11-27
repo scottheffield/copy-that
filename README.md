@@ -24,7 +24,7 @@ Developed and tested on Windows 11 with an Intel GPU and NPU. On a PC without an
 3. Open CopyThat from the Start menu. The welcome window downloads the speech and Polish models, about 4.8 GB in total.
 4. Click into any text field, hold Ctrl+Win, speak, and let go.
 
-You don't need Python or PowerShell. Setup offers an unchecked **Start with Windows** option, and you can change it later from the tray icon's right-click menu.
+You don't need Python or PowerShell. Setup offers an unchecked **Start with Windows** option, and you can change it later in Settings > General.
 
 If CopyThat is already running, launching it again exits quietly; use the existing tray icon.
 

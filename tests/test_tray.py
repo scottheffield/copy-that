@@ -62,6 +62,17 @@ def test_left_click_opens_the_tray_panel_when_there_is_one():
     assert opened == ["panel", "open"]
 
 
+def test_menu_groups_dictation_meetings_and_settings():
+    tray = TrayManager(on_toggle=lambda: None, on_quit=lambda: None, on_settings=lambda: None,
+                       on_history=lambda: None, on_open=lambda: None, on_meeting=lambda: None,
+                       on_meetings_folder=lambda: None, on_meeting_mute=lambda: None,
+                       on_panel=lambda: None)
+    shown = ["---" if item is pystray.Menu.SEPARATOR else item.text
+             for item in tray._build_menu().items if item is pystray.Menu.SEPARATOR or item.visible]
+    assert shown == ["Open CopyThat", "---", "Start dictation", "Dictation history", "---",
+                     "Record meeting", "Open meetings folder", "---", "Settings", "---", "Quit"]
+
+
 def test_tooltip_has_a_line_per_part_and_fits_windows():
     from ui.tray import TOOLTIP_MAX, tooltip
     assert tooltip("0.4.1", "Ready") == "CopyThat 0.4.1\nDictation: Ready"

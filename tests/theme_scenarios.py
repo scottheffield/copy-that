@@ -1136,3 +1136,45 @@ def test_cards_keep_their_bottom_border_clear(root, tmp_path):
     finally:
         panel.close()
         window._win.destroy()
+
+
+def test_start_with_windows_is_a_general_setting(root):
+    state = {"on": False, "calls": []}
+
+    def set_on(value):
+        state["calls"].append(value)
+        state["on"] = value
+
+    applied = []
+    window = SettingsWindow(root, dict(DEFAULT_CONFIG), [], applied.append,
+                            startup=(lambda: state["on"], set_on))
+    window.show("Settings")
+    window._select_page("General")
+    root.update_idletasks()
+    texts = page_texts(window._pages["General"])
+    assert "Startup" in texts and "It waits in the tray, ready to dictate." in texts
+    assert window._startup_var.get() is False
+    window._apply()
+    assert state["calls"] == [] and len(applied) == 1  # Unchanged: Windows isn't touched
+    window._startup_var.set(True)
+    window._apply()
+    assert state["calls"] == [True] and state["on"] and "startup" not in applied[-1]
+
+    def refuse(value):
+        raise OSError("denied")
+    window._startup = (lambda: True, refuse)
+    window._startup_var.set(False)
+    window._apply()
+    assert window._startup_var.get() is True and len(applied) == 2  # Put back, nothing applied
+    window._win.destroy()
+
+    # A dev build shows it greyed out.
+    window = SettingsWindow(root, dict(DEFAULT_CONFIG), [], startup=(lambda: False, None))
+    window.show("Settings")
+    window._select_page("General")
+    root.update_idletasks()
+    assert "Only in the installed app." in page_texts(window._pages["General"])
+    box = next(w for w in _walk(window._pages["General"]) if isinstance(w, ctk.CTkCheckBox)
+               and w.cget("text") == "Start CopyThat when Windows starts")
+    assert box.cget("state") == "disabled"
+    window._win.destroy()
