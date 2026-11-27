@@ -105,9 +105,9 @@ def _make_wide_dropdown(om, values, on_select):
 # Settings tabs; the keys differ from their labels where a page shares the name.
 SETTINGS_TABS = {"General": "General", "Speech": "Models", "Meeting settings": "Meetings", "Advanced": "Advanced"}
 APPLY_PAGES = tuple(SETTINGS_TABS) + ("Dictionary",)  # Pages that edit settings show Apply
-NAV_PAGES = ("Meetings", "Dictation", "Dictionary")
+NAV_PAGES = ("Home", "Meetings", "Dictation", "Dictionary")
 PAGES = NAV_PAGES + tuple(SETTINGS_TABS)
-FIRST_PAGE = "Meetings"
+FIRST_PAGE = "Home"  # A plain open always lands here
 RENAMED_PAGES = {"History": "Dictation"}  # Saved by 0.3.x builds
 
 
@@ -115,7 +115,7 @@ class SettingsWindow:
     """The main window. Dictation and Meetings sit above the settings pages; Apply shows only on settings pages."""
 
     def __init__(self, root: ctk.CTk, config: dict, input_devices: list[dict],
-                 on_apply=None, models=None, history=None, on_page_change=None, meetings=None):
+                 on_apply=None, models=None, history=None, on_page_change=None, meetings=None, stats=None):
         """
         Args:
             root: Parent CTk window.
@@ -126,6 +126,7 @@ class SettingsWindow:
                 remove_model(kind, key). Without it, cards only show what is installed.
             history: Callable returning this session's takes for the Dictation page.
             meetings: Provides retranscribe_meeting(folder) and meeting_in_use(folder).
+            stats: The UsageStats shown on Home; the app's reset_stats clears it.
             on_page_change: Callback(page_name) so the app can reopen at the last page.
         """
         self._root = root
@@ -136,9 +137,13 @@ class SettingsWindow:
         self._history = history or (lambda: [])
         self._meetings = meetings
         self._meetings_page = None
+        self._home = None
+        self._stats = stats
         self._on_page_change = on_page_change
         self._page = None
-        self._settings_tab = next(iter(SETTINGS_TABS))  # Settings reopens at the last tab
+        # Settings reopens at the last tab, also after the window was closed.
+        last = config.get("main_window_page")
+        self._settings_tab = last if last in SETTINGS_TABS else next(iter(SETTINGS_TABS))
         self._win: ctk.CTkToplevel | None = None
         self._model_radio_var = ctk.StringVar(value=config.get("model_size", "base"))
         self._model_rows_frame: ctk.CTkFrame | None = None
@@ -164,7 +169,7 @@ class SettingsWindow:
         win.after(self.FRONT_MS, lambda: win.winfo_exists() and win.attributes("-topmost", False))
 
     def show(self, page=None):
-        """Open the window, or bring it forward, at page (default: the last page used)."""
+        """Open the window at page, or at Home; an open window comes forward at page, or as it was."""
         if self._win is not None and self._win.winfo_exists():
             if page:
                 self._select_page(page)
@@ -263,7 +268,7 @@ class SettingsWindow:
 
         # Your things on top; Settings pinned to the bottom of the sidebar.
         for name in NAV_PAGES:
-            # Meetings scrolls inside its own page, under a fixed header.
+            # Meetings scrolls inside its own page, under a fixed header; the others scroll whole.
             self._pages[name] = ctk.CTkFrame(container, fg_color=_CONTENT_BG) if name == "Meetings" else scrolling(container)
             self._nav_buttons[name] = self._nav_button(sidebar, name)
             self._nav_buttons[name].pack(padx=12, pady=(16 if name == NAV_PAGES[0] else 3, 3))
@@ -275,6 +280,12 @@ class SettingsWindow:
             self._pages["Meetings"], self._root,
             lambda: self._config.get("meetings_dir", str(Path.home() / "CopyThat Meetings")),
             provider=self._meetings, status=self.update_status)
+        from ui.home_page import HomePage
+        self._home = HomePage(
+            self._pages["Home"], self._root, self._stats, lambda: self._config,
+            lambda: self._config.get("meetings_dir", str(Path.home() / "CopyThat Meetings")),
+            provider=self._meetings, open_meeting=self.show_meeting,
+            open_meetings=lambda: self._select_page("Meetings"))
 
         # Settings: one page, with a tab for each group.
         self._settings_frame = ctk.CTkFrame(container, fg_color=_CONTENT_BG)
@@ -309,6 +320,15 @@ class SettingsWindow:
             ctk.CTkLabel(page, text=descriptions[name], text_color=theme.MUTED,
                 wraplength=460, justify="left").pack(anchor="w", padx=20, pady=(14, 4))
         scroll = self._pages["General"]
+        ctk.CTkLabel(scroll, text="Your name", text_color=theme.TEXT,
+            font=ctk.CTkFont(size=13, weight="bold")).pack(**pad, anchor="w")
+        from ui.home_page import windows_first_name
+        self._name_var = ctk.StringVar(value=self._config.get("meeting_my_name", ""))
+        ctk.CTkEntry(scroll, textvariable=self._name_var, placeholder_text=windows_first_name() or "Your name",
+                     fg_color=_INPUT_BG, border_color=_INPUT_BORDER, text_color=_SECTION_TEXT,
+                     height=30).pack(padx=20, pady=4, fill="x")
+        ctk.CTkLabel(scroll, text="Home greets you by it, and new meeting transcripts use it instead of Me.",
+            text_color=theme.MUTED, wraplength=460, justify="left").pack(padx=20, anchor="w")
         ctk.CTkLabel(scroll, text="Appearance", text_color=theme.TEXT,
             font=ctk.CTkFont(size=13, weight="bold")).pack(**pad, anchor="w")
         self._theme_var = ctk.StringVar(value=self._config.get("theme", "system").title())
@@ -542,6 +562,18 @@ class SettingsWindow:
             ("Add a space after each dictation", self._space_var, "Not when Enter is pressed after pasting."),
             ("Show your words in the bubble", self._balloon_var, "Live while you speak, then the result."),
         ))
+        ctk.CTkLabel(scroll, text="Usage stats", text_color=theme.TEXT,
+            font=ctk.CTkFont(size=13, weight="bold")).pack(padx=20, pady=(4, 0), anchor="w")
+        stats_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        stats_frame.pack(padx=20, pady=(0, 4), fill="x")
+        self._stats_var = ctk.BooleanVar(value=self._config.get("usage_stats", True))
+        checkboxes(stats_frame, (
+            ("Keep usage stats for Home", self._stats_var,
+             "Numbers only, on this PC: words, speaking time, and days you dictated."),
+        ))
+        ctk.CTkButton(scroll, text="Reset stats\u2026", width=0, height=30, command=self._reset_stats,
+            fg_color=_BTN_SEC_BG, hover_color=theme.SELECTED, text_color=_BTN_SEC_TEXT,
+            border_color=_CARD_BORDER, border_width=1).pack(padx=20, pady=(0, 18), anchor="w")
 
         meeting_frame = ctk.CTkFrame(self._pages["Meeting settings"], fg_color="transparent")
         meeting_frame.pack(padx=20, pady=(10, 10), fill="x")
@@ -594,8 +626,7 @@ class SettingsWindow:
         _make_wide_dropdown(self._priority_dropdown, list(self._priority_choices), None)
         _make_wide_dropdown(self._bubble_dropdown, list(self._bubble_choices), None)
 
-        last = RENAMED_PAGES.get(self._config.get("main_window_page"), self._config.get("main_window_page"))
-        self._select_page(requested or (last if last in PAGES else FIRST_PAGE))
+        self._select_page(requested or FIRST_PAGE)
 
     def _nav_button(self, parent, name):
         """A sidebar entry with its icon. Settings opens the last tab used.
@@ -678,6 +709,8 @@ class SettingsWindow:
             build_history_page(self._pages[name], self._root, list(self._history()))
         elif name == "Meetings":
             self._meetings_page.render()
+        elif name == "Home":
+            self._home.render()
         if name in APPLY_PAGES:
             self._close_btn.pack(side="right", before=self._status_label)
             self._apply_btn.pack(side="right", padx=(8, 0), before=self._close_btn)
@@ -696,6 +729,8 @@ class SettingsWindow:
         self._paint_tabs()
 
     def _close(self):
+        if self._home:
+            self._home.close()
         if self._meetings_page:
             self._meetings_page.save_pending()
             self._meetings_page.close()
@@ -705,6 +740,24 @@ class SettingsWindow:
         """Redraw the Meetings page if it is showing, e.g. when a transcript finishes."""
         if self.is_open and self._page == "Meetings" and self._meetings_page:
             self._meetings_page.render()
+
+    def refresh_home(self):
+        """Redraw Home if it is showing, e.g. after a take or when a meeting starts or finishes."""
+        if self.is_open and self._page == "Home" and self._home:
+            self._home.render()
+
+    def _reset_stats(self):
+        from ui.dialogs import confirm
+
+        def reset():
+            if self._meetings and hasattr(self._meetings, "reset_stats"):
+                self._meetings.reset_stats()
+            elif self._stats is not None:
+                self._stats.reset()
+            self.update_status("Usage stats reset.", "#30D158")
+        confirm(self._root, "Reset stats",
+                "Forget every word count, your speed and your streak? This can't be undone.",
+                "Reset", "Cancel", reset)
 
     def meeting_moved(self, old, new):
         """A meeting's folder was renamed: the Meetings page follows it."""
@@ -723,6 +776,8 @@ class SettingsWindow:
             self._paint_tabs()
             if self._meetings_page:
                 self._meetings_page.refresh_theme()
+            if self._home:
+                self._home.refresh_theme()
 
     def _card(self, kind, key, parent, title, summary, variable, value, size_gb=None):
         """Add a model card. Downloadable cards (key set) track download state."""
@@ -816,6 +871,9 @@ class SettingsWindow:
         new_config = dict(self._config)
         new_config["theme"] = self._theme_var.get().lower()
         new_config["highlight"] = self._highlight_var.get()
+        my_name = " ".join(self._name_var.get().split())[:60]
+        new_config["meeting_my_name"] = "" if my_name.casefold() == "me" else my_name
+        new_config["usage_stats"] = self._stats_var.get()
         new_config["model_size"] = self._model_radio_var.get()
         new_config["hotkey"] = self._hotkey_var.get().strip()
         new_config["language"] = self._get_selected_lang_code()

@@ -23,7 +23,7 @@ def root():
 
 @pytest.fixture(autouse=True)
 def no_real_meetings(monkeypatch, tmp_path):
-    """The window opens on Meetings: keep every test off the user's own meetings folder."""
+    """Home and Meetings list meetings: keep every test off the user's own meetings folder."""
     monkeypatch.setitem(DEFAULT_CONFIG, "meetings_dir", str(tmp_path / "no-meetings"))
 
 
@@ -125,7 +125,7 @@ def test_one_window_apply_only_on_settings_pages(root):
         root.update()
         time.sleep(0.01)
     assert not window._win.attributes("-topmost")
-    assert window.page == "Meetings" and window._apply_btn.winfo_manager() == "" and window._close_btn.winfo_manager() == ""
+    assert window.page == "Home" and window._apply_btn.winfo_manager() == "" and window._close_btn.winfo_manager() == ""
     window.show("Dictation")
     root.update_idletasks()
     assert window.page == "Dictation" and window._apply_btn.winfo_manager() == "" and window._close_btn.winfo_manager() == ""
@@ -139,18 +139,20 @@ def test_one_window_apply_only_on_settings_pages(root):
     assert "Second take" in [w.cget("text") for w in newest.winfo_children() if isinstance(w, ctk.CTkLabel)]
     window._select_page("Dictionary")
     assert window._apply_btn.winfo_manager() == "pack"
-    assert pages == ["Meetings", "Dictation", "General", "Dictation", "Dictionary"]
+    assert pages == ["Home", "Dictation", "General", "Dictation", "Dictionary"]
     window._win.destroy()
 
 
-def test_window_reopens_at_last_page(root):
+def test_plain_open_lands_on_home_and_settings_keeps_its_tab(root):
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "Meeting settings"}, [])
+    window.show()
+    assert window.page == "Home"
+    window.show("Settings")
+    assert window.page == "Meeting settings"  # The last tab, from before the window closed
+    window._win.destroy()
     window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "History"}, [])
-    window.show()
+    window.show("History")
     assert window.page == "Dictation"  # 0.3.x saved the old name
-    window._win.destroy()
-    window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "Gone"}, [])
-    window.show()
-    assert window.page == "Meetings"
     window._win.destroy()
 
 
@@ -376,13 +378,97 @@ def page_texts(widget):
     return out
 
 
+class FakeRecorder(FakeMeetings):
+    def __init__(self):
+        super().__init__()
+        self.state, self.resets = "idle", 0
+
+    def meeting_status(self):
+        return self.state, 75
+
+    def toggle_meeting(self):
+        self.state = "idle" if self.state == "recording" else "recording"
+
+    def reset_stats(self):
+        self.resets += 1
+
+
+def test_home_shows_stats_streak_and_recent_meetings(root, tmp_path):
+    from datetime import date, timedelta
+    from usage_stats import UsageStats
+    from ui import home_page
+    meetings_dir = tmp_path / "meetings"
+    for n, title in enumerate(("Kickoff", "Planning", "Check-in", "Oldest")):
+        make_meeting(meetings_dir, f"2026-11-2{n} 0900", f"2026-11-2{4 - n}T09:00:00", title,
+                     lines=[("Me", "Hello."), ("Paul Hepworth", "Hi."), ("Others", "Hey.")])
+    stats = UsageStats(tmp_path / "stats.json")
+    today = date.today()
+    stats.record(" ".join(["word"] * 1200), 480, today=today - timedelta(days=1))
+    stats.record("and a few more today", 2, today=today)
+    provider = FakeRecorder()
+    config = {**DEFAULT_CONFIG, "meetings_dir": str(meetings_dir), "meeting_my_name": "Sam"}
+    window = SettingsWindow(root, config, [], meetings=provider, stats=stats)
+    window.show()
+    root.update_idletasks()
+    texts = page_texts(window._pages["Home"])
+    assert window.page == "Home"
+    assert any(t.startswith("Good ") and t.endswith(", Sam") for t in texts)
+    assert "1,205" in texts and "About 5 pages" in texts and "New milestone: you passed 1,000 words." in texts
+    assert any(t.endswith("streak. Keep it going.") for t in texts)
+    # The last three meetings, newest first; Sam first among the initials.
+    titles = [t for t in texts if t in ("Kickoff", "Planning", "Check-in", "Oldest")]
+    assert titles == ["Kickoff", "Planning", "Check-in"]
+    assert home_page.meeting_people(meetings_dir / "2026-11-20 0900", "Sam")[:2] == [
+        ("S", theme.ACCENT), ("P", __import__("ui.meetings_page", fromlist=["x"]).SPEAKER_COLORS[0])]
+    assert window._home._canvas is not None and window._home._canvas.find_all()
+    # Record meeting, then Stop with the time, from Home.
+    record = window._home._record
+    assert record.cget("text") == "Record meeting"
+    record.invoke()
+    assert record.cget("text").startswith("\u25a0  Stop") and __import__("meetings").clock(75) in record.cget("text")
+    record.invoke()
+    # A new take while Home is open redraws it.
+    stats.record("one two three", 1, today=today)
+    window.refresh_home()
+    assert "1,208" in page_texts(window._pages["Home"])
+    # With stats off, Home says how to turn them on and still lists meetings.
+    window._config["usage_stats"] = False
+    window.refresh_home()
+    texts = page_texts(window._pages["Home"])
+    assert any(t.startswith("Usage stats are off.") for t in texts) and "1,208" not in texts
+    assert "Kickoff" in texts
+    # Settings, General: the name, and Keep usage stats saves with Apply.
+    window._select_page("General")
+    window._name_var.set("  Me ")
+    window._stats_var.set(False)
+    new = window._get_new_config()
+    assert new["meeting_my_name"] == "" and new["usage_stats"] is False
+    window._name_var.set("Sam  Lee")
+    assert window._get_new_config()["meeting_my_name"] == "Sam Lee"
+    window._win.destroy()
+
+
+def test_home_greeting_and_meeting_times():
+    from datetime import datetime
+    from ui.home_page import greeting, meeting_when
+    assert greeting("Sam", datetime(2026, 11, 27, 9)) == "Good morning, Sam"
+    assert greeting("", datetime(2026, 11, 27, 13)) == "Good afternoon"
+    assert greeting("Sam", datetime(2026, 11, 27, 19)) == "Good evening, Sam"
+    today = datetime(2026, 11, 27).date()
+    item = {"started": datetime(2026, 11, 27, 9, 2), "duration": 42 * 60, "status": "done"}
+    assert meeting_when(item, today) == "Today, 9:02 AM · 42 min"
+    assert meeting_when({**item, "started": datetime(2026, 11, 26, 9)}, today) == "Yesterday · 42 min"
+    assert meeting_when({**item, "started": datetime(2026, 11, 24, 9), "duration": 4818}, today) == "Tue · 1 hr 20 min"
+    assert meeting_when({**item, "started": datetime(2025, 11, 3, 9), "duration": 3600}, today) == "Nov 3, 2025 · 1 hr"
+
+
 def test_sidebar_settings_tabs_and_meetings_back_to_list(root, tmp_path):
     review = make_meeting(tmp_path, "2026-11-24 1300", "2026-11-24T13:00:00", "Design review",
                           lines=[("Me", "Let's start with onboarding.")])
     window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=FakeMeetings())
     window.show()
     root.update_idletasks()
-    assert window.page == "Meetings"
+    assert window.page == "Home"
     # Settings opens at General first, then at the last tab used.
     window._nav_buttons["Settings"].invoke()
     assert window.page == "General" and window._apply_btn.winfo_manager() == "pack"

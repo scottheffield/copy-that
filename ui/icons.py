@@ -27,7 +27,7 @@ def save_app_icon(path):
 
 
 GLYPH_FONTS = (r"C:\Windows\Fonts\SegoeIcons.ttf", r"C:\Windows\Fonts\segmdl2.ttf")
-GLYPHS = {"Meetings": "\uE716", "Dictation": "\uE720", "Dictionary": "\uE82D", "Settings": "\uE713"}
+GLYPHS = {"Home": "\uE80F", "Meetings": "\uE716", "Dictation": "\uE720", "Dictionary": "\uE82D", "Settings": "\uE713"}
 
 
 def render_glyph(char, color, size):
