@@ -15,6 +15,7 @@ DAY_LABELS_W, MONTHS_H, LEGEND_H = 30, 16, 24
 LEVEL_MIX = (0.0, 0.35, 0.6, 0.8, 1.0)   # How far each heatmap level is from empty toward the accent
 INITIAL_TEXT = ("#FFFFFF", "#10151F")    # On the speaker colors: dark ones in light mode, light in dark
 RECORD_DOT = "#C0392B"
+ON_STOP = ("#FFFFFF", "#2A0A12")         # Text on the Stop button: white on dark red, near-black on pink
 FACE, FACE_OVERLAP = 28, 8               # Speaker circles on recent meetings, in unscaled px
 FACES_W = FACE + 2 * (FACE - FACE_OVERLAP)
 SPEAKER_SCAN_LINES = 400                 # Enough lines to find who spoke, without reading a long call
@@ -356,7 +357,7 @@ class HomePage:
         state, elapsed = self._provider.meeting_status()
         if state == "recording":
             button.configure(text=f"■  Stop  ·  {meetings.clock(elapsed)}", image=None, state="normal",
-                             fg_color=theme.ERROR, hover_color=theme.ERROR, text_color="#FFFFFF",
+                             fg_color=theme.ERROR, hover_color=theme.ERROR, text_color=ON_STOP,
                              border_color=theme.ERROR)
             self._tick_id = button.after(1000, self._update_record)
         elif state == "finishing":

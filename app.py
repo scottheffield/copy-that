@@ -22,7 +22,7 @@ from dictation_engine import (
     is_cleanup_downloaded, is_model_downloaded, launch_device,
 )
 from model_store import Downloads, installed, remove
-from version import VERSION, label as version_label
+from version import label as version_label
 from ui.tray import TrayManager
 from ui.overlay import OverlayWindow
 from ui.settings import SettingsWindow
@@ -41,6 +41,7 @@ class GUIApp:
     _meeting = None  # The current or last MeetingSession
     _retranscribing = frozenset()  # Replaced by a set in __init__; folders being re-transcribed
     _full_speed = False            # Opted out of Windows power throttling right now (#14)
+    _panel = None                  # The tray panel (#90), made on the first left-click
     _folder_renames = frozenset()  # Replaced by a set in __init__; folders to retitle once idle (#57)
     _speaker_jobs, _speaker_folder = (), None  # Replaced in __init__; speaker labeling queue
     _speaker_lock = threading.Lock()
@@ -116,6 +117,8 @@ class GUIApp:
             on_meetings_folder=lambda: self._events.put(("action", self._open_meetings_folder)),
             on_meeting_mute=lambda: self._events.put(("action", lambda: self._set_meeting_muted(None))),
             meeting_muted=lambda: bool(self._meeting_recording() and self._meeting.muted),
+            on_panel=lambda: self._events.put(("action", self._toggle_panel)),
+            meeting_line=self._meeting_line,
         )
 
         # Lazy-created windows
@@ -141,7 +144,7 @@ class GUIApp:
     def _refresh_theme(self, mode):
         self._overlay.set_theme(mode)
         self._chip.set_theme(mode)
-        for window in (self._settings_win, self._welcome):
+        for window in (self._settings_win, self._welcome, self._panel):
             if window:
                 window.refresh_theme()
 
@@ -151,7 +154,7 @@ class GUIApp:
         if is_model_downloaded(self._config["model_size"]):
             self._start_engine()
         else:
-            self._tray.update_state("loading", f"CopyThat {VERSION} — Download a speech model to start")
+            self._tray.update_state("loading", "Download a speech model to start")
             self._show_welcome()
 
         # Start tray
@@ -317,6 +320,8 @@ class GUIApp:
     def _refresh_home(self):
         if self._settings_win:
             self._settings_win.refresh_home()
+        if self._panel:
+            self._panel.refresh()
 
     def reset_stats(self):
         """Settings' Reset stats: forget every count."""
@@ -385,14 +390,14 @@ class GUIApp:
             return
 
         if state == AppState.LOADING:
-            self._tray.update_state(state_name, f"CopyThat {VERSION} — Loading model...")
+            self._tray.update_state(state_name, "Loading model…")
             self._overlay.show_loading()
             self._settings_status("Loading model...", "#FF9F0A")
 
         elif state == AppState.READY:
             self._stop_audio_polling()
             text = data.get("text")
-            self._tray.update_state(state_name, f"CopyThat {VERSION} — Ready")
+            self._tray.update_state(state_name, "Ready")
             if text:
                 # Pasted text is visible where it landed; only unpasted text needs the balloon.
                 self._overlay.show_result(text, linger=not data.get("pasted"))
@@ -411,7 +416,7 @@ class GUIApp:
                 self._note_interrupted_meetings()
 
         elif state == AppState.RECORDING:
-            self._tray.update_state(state_name, f"CopyThat {VERSION} — Recording...")
+            self._tray.update_state(state_name, "Recording…")
             if self._overlay._state != "recording":
                 self._overlay.show_recording()
                 self._start_audio_polling()
@@ -420,13 +425,13 @@ class GUIApp:
 
         elif state == AppState.PROCESSING:
             self._stop_audio_polling()
-            self._tray.update_state(state_name, f"CopyThat {VERSION} — Transcribing...")
+            self._tray.update_state(state_name, "Transcribing…")
             self._overlay.show_processing()
 
         elif state == AppState.ERROR:
             self._stop_audio_polling()
             error_msg = data.get("error", "Unknown error")
-            self._tray.update_state(state_name, f"CopyThat {VERSION} — Error: {error_msg[:60]}")
+            self._tray.update_state(state_name, f"Error: {error_msg[:60]}")
             self._overlay.show_error()
             self._settings_status(f"Error: {error_msg[:40]}", "#FF453A")
             self._settings_set_apply(True)
@@ -690,8 +695,75 @@ class GUIApp:
                     log(f"Meeting: could not put your name on the transcript ({type(error).__name__})")
             self._find_speakers_later(folder)
         self._refresh_meetings()
+        if self._meeting and self._meeting.folder == folder:
+            self._tray.update_state(self._tray._state)  # Tooltip: the meeting's line goes
         if self._meeting and self._meeting.folder == folder and self._chip.state == "finishing":
             self._chip.show_ready() if ok else self._chip.show_failed()
+
+    # -- Tray panel (#90) ----------------------------------------------------------
+
+    def _toggle_panel(self):
+        if self._panel is None:
+            from ui.tray_panel import TrayPanel
+            self._panel = TrayPanel(self._root, self, self._stats, lambda: self._config,
+                                    lambda: self._config["meetings_dir"])
+        self._panel.toggle()
+
+    def _meeting_line(self):
+        """The tray tooltip's meeting line: "Meeting: recording since 9:02 AM", or None."""
+        state, _elapsed = self.meeting_status()
+        if state == "finishing":
+            return "Meeting: finishing the transcript"
+        if state != "recording":
+            return None
+        try:
+            from datetime import datetime
+            started = datetime.fromisoformat(self._meeting.meta["started"])
+            since = f" since {started:%I:%M %p}".replace(" 0", " ")
+        except (KeyError, TypeError, ValueError):
+            since = ""
+        return f"Meeting: recording{since}" + (", mic muted" if self._meeting.muted else "")
+
+    def meeting_muted(self):
+        return bool(self._meeting_recording() and self._meeting.muted)
+
+    def toggle_meeting_mute(self):
+        self._set_meeting_muted(None)
+
+    def dictation_status(self):
+        return self._tray.status
+
+    def rename_meeting(self, folder, title):
+        """A title edited in the tray panel. The folder follows, now or once the meeting is idle."""
+        from meetings import rename_meeting
+        try:
+            rename_meeting(folder, title)
+        except (OSError, ValueError) as error:
+            log(f"Meeting: could not rename it ({type(error).__name__})")
+            self._notify("Couldn't rename the meeting.")
+            return
+        self.rename_meeting_folder(folder)
+        self._refresh_meetings()
+
+    def open_meeting(self, folder):
+        """A meeting in the main window."""
+        if not (self._settings_win and self._settings_win.is_open):
+            self._show_main("Meetings")
+        self._root.after(50, lambda: self._settings_win and self._settings_win.show_meeting(folder))
+
+    def open_folder(self, folder=None):
+        """A meeting's folder in Explorer, or the meetings folder with None."""
+        if folder is None:
+            self._open_meetings_folder()
+            return
+        import os
+        try:
+            os.startfile(folder)
+        except OSError as error:
+            log(f"Meeting: could not open its folder ({type(error).__name__})")
+
+    def open_main(self):
+        self._show_main()
 
     def _open_last_transcript(self):
         """The chip's Open: the meeting's page in the main window."""
@@ -721,6 +793,8 @@ class GUIApp:
         if self._settings_win:
             self._settings_win.refresh_meetings()
             self._settings_win.refresh_home()
+        if self._panel:
+            self._panel.refresh()
 
     # -- Folder names follow titles (#57) ---------------------------------------
 

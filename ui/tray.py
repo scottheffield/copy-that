@@ -4,6 +4,17 @@ import threading
 import pystray
 from ui.icons import STATE_ICONS
 
+TOOLTIP_MAX = 127   # Windows cuts a tray tooltip at 128 characters, the terminator included
+
+
+def tooltip(version, status, meeting=None):
+    """One line per part of the app: the name, then Dictation, then Meeting while one runs."""
+    lines = [f"CopyThat {version}", f"Dictation: {status}"]
+    if meeting:
+        lines.append(meeting)
+    text = "\n".join(lines)
+    return text if len(text) <= TOOLTIP_MAX else text[:TOOLTIP_MAX - 1] + "…"
+
 
 class TrayManager:
     """Manages the system tray icon and context menu."""
@@ -12,7 +23,9 @@ class TrayManager:
                  device="GPU", model="parakeet", hotkey="ctrl+win",
                  on_startup=None, startup_enabled=None,
                  on_meeting=None, meeting_recording=None, on_meetings_folder=None,
-                 on_meeting_mute=None, meeting_muted=None):
+                 on_meeting_mute=None, meeting_muted=None, on_panel=None, meeting_line=None):
+        self._on_panel = on_panel
+        self._meeting_line = meeting_line or (lambda: None)
         self._on_meeting = on_meeting
         self._on_meeting_mute = on_meeting_mute
         self._meeting_muted = meeting_muted or (lambda: False)
@@ -29,8 +42,7 @@ class TrayManager:
         self._model = model
         self._hotkey = hotkey
         self._state = "loading"
-        from version import VERSION
-        self._tooltip = f"CopyThat {VERSION} — Loading..."
+        self.status = "Loading…"
         self._icon: pystray.Icon | None = None
         self._thread: threading.Thread | None = None
 
@@ -62,9 +74,14 @@ class TrayManager:
         if self._on_settings:
             items.append(pystray.MenuItem("Settings", lambda: self._on_settings(),
                                           default=self._on_open is None))
-        if self._on_open:
-            # Left-click opens the main window at the last page used; it never starts a
-            # recording. Hidden from the menu, which already has Dictation history and Settings.
+        if self._on_panel:
+            # Left-click opens the tray panel (#90); it never starts a recording. Hidden from
+            # the menu, which stays as it was.
+            items.append(pystray.MenuItem("CopyThat panel", lambda: self._on_panel(),
+                                          default=True, visible=False))
+        elif self._on_open:
+            # Left-click opens the main window at the last page used. Hidden from the menu,
+            # which already has Dictation history and Settings.
             items.append(pystray.MenuItem("Open CopyThat", lambda: self._on_open(),
                                           default=True, visible=False))
         if self._on_startup:
@@ -106,23 +123,28 @@ class TrayManager:
         self._icon = pystray.Icon(
             name="CopyThat",
             icon=initial_icon,
-            title=self._tooltip,
+            title=self.tooltip(),
             menu=self._build_menu(),
         )
         self._thread = threading.Thread(target=self._icon.run, daemon=True)
         self._thread.start()
 
-    def update_state(self, state_name: str, tooltip: str | None = None):
-        """Update tray icon and tooltip for a new state."""
+    def tooltip(self):
+        from version import VERSION
+        return tooltip(VERSION, self.status, self._meeting_line())
+
+    def update_state(self, state_name: str, status: str | None = None):
+        """Update the tray icon and tooltip. status is dictation's, such as "Ready";
+        the meeting's line comes from meeting_line."""
         self._state = state_name
-        if tooltip:
-            self._tooltip = tooltip
+        if status:
+            self.status = status
 
         if self._icon and self._icon.visible:
             icon_fn = STATE_ICONS.get(state_name)
             if icon_fn:
                 self._icon.icon = icon_fn()
-            self._icon.title = self._tooltip
+            self._icon.title = self.tooltip()
             # Force menu rebuild so dynamic text updates
             self._icon.menu = self._build_menu()
             self._icon.update_menu()

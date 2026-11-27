@@ -930,3 +930,80 @@ def test_meeting_page_plays_from_a_clicked_line_and_saves_the_audio(root, tmp_pa
     assert page._export is None and target.exists()
     window._close()
     assert page._player is None and not playback.holding(folder)
+
+
+class FakePanelApp:
+    """What the tray panel asks of the app (#90)."""
+    def __init__(self):
+        self.state, self.muted, self.calls = "idle", False, []
+
+    def meeting_status(self):
+        return self.state, 75
+
+    def meeting_muted(self):
+        return self.muted
+
+    def dictation_status(self):
+        return "Ready"
+
+    def __getattr__(self, name):
+        return lambda *args: self.calls.append((name, *args))
+
+
+def test_tray_panel_records_renames_and_closes(root, tmp_path):
+    from ui.tray_panel import TrayPanel
+    from usage_stats import UsageStats
+    make_meeting(tmp_path, "a", "2026-11-20T09:02:00", title="Budget review")
+    make_meeting(tmp_path, "b", "2026-11-21T10:15:00")
+    stats = UsageStats(tmp_path / "stats.json")
+    stats.record("one two three", 2)
+    app = FakePanelApp()
+    panel = TrayPanel(root, app, stats, lambda: {"usage_stats": True}, lambda: str(tmp_path))
+    panel.show(anchor=(800, 2000))
+    root.update()
+    texts = page_texts(panel._frame)
+    assert "Ready" in texts and "3" in texts and "words" in texts and "Yesterday" not in texts
+    assert panel._record.cget("text") == "Record meeting" and panel._mute.winfo_manager() == ""
+
+    # Recording: Stop with the time, and Mute beside it.
+    app.state = "recording"
+    panel._update_meeting()
+    assert panel._record.cget("text") == "■  Stop  ·  01:15" and panel._mute.cget("text") == "Mute mic"
+    assert panel._mute.winfo_manager() == "pack"
+    panel._toggle_mute()
+    assert ("toggle_meeting_mute",) in app.calls
+
+    # Titles edit in place: Enter saves, Escape puts the old one back, an empty field keeps it.
+    def all_entries(widget):
+        for child in widget.winfo_children():
+            if isinstance(child, ctk.CTkEntry):
+                yield child
+            yield from all_entries(child)
+    newest, budget = list(all_entries(panel._frame))
+    assert newest.get() == "" and budget.get() == "Budget review"
+    panel._start_edit(newest)
+    panel.refresh()  # A refresh while editing must not throw the edit away
+    assert newest.winfo_exists()
+    newest.insert(0, "  Design   sync ")
+    panel._finish(newest)
+    assert ("rename_meeting", tmp_path / "b", "Design sync") in app.calls
+    panel._start_edit(budget)
+    budget.delete(0, "end")
+    budget.insert(0, "Something else")
+    panel._cancel(budget)
+    assert budget.get() == "Budget review"
+    panel._start_edit(budget)
+    budget.delete(0, "end")
+    panel._commit(budget)
+    assert not [c for c in app.calls if c[0] == "rename_meeting" and c[1] == tmp_path / "a"]
+
+    # A tray click closes it; the same click arriving after a focus-loss close doesn't reopen it.
+    panel.toggle()
+    assert not panel.is_open
+    panel.toggle()
+    assert not panel.is_open
+    panel._closed_at = 0
+    panel.toggle(anchor=(800, 2000))
+    assert panel.is_open
+    panel._then_close(app.open_main)
+    assert not panel.is_open and ("open_main",) in app.calls
