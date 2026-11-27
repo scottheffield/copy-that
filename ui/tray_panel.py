@@ -193,8 +193,11 @@ class TrayPanel:
         card = ctk.CTkFrame(parent, fg_color=theme.SURFACE, border_color=theme.BORDER,
                             border_width=1, corner_radius=10)
         card.pack(fill="x", pady=(12, 0))
+        nudge = not summary["dictated_today"]  # Once you have, the number says it
+        # Bottom space is padding, not a spacer frame: a child touching the card's edge
+        # paints over its 1 px border (#107).
         grid = ctk.CTkFrame(card, fg_color="transparent")
-        grid.pack(fill="x", padx=12, pady=(8, 2))
+        grid.pack(fill="x", padx=12, pady=(8, 2 if nudge else 8))
         streak = summary["streak"]
         cells = ((f"{summary['words']:,}", "words"),
                  (str(summary["wpm"]) if summary["wpm"] else "–", "wpm"),
@@ -207,11 +210,9 @@ class TrayPanel:
                          font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w")
             ctk.CTkLabel(cell, text=label, text_color=theme.MUTED, height=16,
                          font=ctk.CTkFont(size=11)).pack(anchor="w")
-        if not summary["dictated_today"]:  # A nudge; once you have, the number says it
+        if nudge:
             ctk.CTkLabel(card, text=streak_line(summary), text_color=theme.MUTED, anchor="w",
                          font=ctk.CTkFont(size=12)).pack(fill="x", padx=12, pady=(0, 8))
-        else:
-            ctk.CTkFrame(card, fg_color="transparent", height=6).pack()
 
     def _recent(self, parent):
         ctk.CTkLabel(parent, text="RECENT MEETINGS", text_color=theme.MUTED, anchor="w", height=16,

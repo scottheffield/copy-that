@@ -1055,3 +1055,84 @@ def test_tray_panel_records_renames_and_closes(root, tmp_path):
     assert panel.is_open
     panel._then_close(app.open_main)
     assert not panel.is_open and ("open_main",) in app.calls
+
+
+def _walk(widget):
+    for child in widget.winfo_children():
+        yield child
+        yield from _walk(child)
+
+
+def _assert_bottom_border_clear(card):
+    """No child of a bordered card reaches its bottom border, where it would paint over it (#107)."""
+    border = round(card.cget("border_width") * card._get_widget_scaling())
+    inside = card.winfo_height() - border
+    for child in card.winfo_children():
+        if child is card._canvas or not child.winfo_ismapped():
+            continue
+        assert child.winfo_y() + child.winfo_height() <= inside, child
+
+
+def test_flow_row_wraps_what_does_not_fit(root):
+    from ui.controls import FlowRow
+    window = ctk.CTkToplevel(root)
+    window.geometry("300x200")
+    try:
+        row = FlowRow(window)
+        row.pack(fill="x")
+        buttons = [ctk.CTkButton(row, text=f"A longer button {n}", width=0) for n in range(6)]
+        window.update()
+        total = sum(b.winfo_reqwidth() for b in buttons)
+        scale = window._get_window_scaling()
+        window.geometry(f"{round(total / 2 / scale)}x200")  # Room for about half of them
+        window.update()
+        lines = sorted({b.winfo_y() for b in buttons})
+        assert len(lines) > 1 and lines[0] == 0
+        assert all(b.winfo_x() + b.winfo_width() <= row.winfo_width() for b in buttons)
+        assert row.winfo_height() >= max(b.winfo_y() + b.winfo_height() for b in buttons)
+        window.geometry(f"{round(total * 1.5 / scale)}x200")
+        window.update()
+        assert {b.winfo_y() for b in buttons} == {0}
+    finally:
+        window.destroy()
+
+
+def test_meeting_actions_fit_the_default_window_width(root, tmp_path):
+    from ui.controls import FlowRow
+    folder = make_meeting(tmp_path, "2026-11-24 1300", "2026-11-24T13:00:00", "Design review",
+                          lines=[("Me", "Hello."), ("Others", "Hi.")])
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=FakeMeetings())
+    window.show("Meetings")
+    window._meetings_page.show_detail(folder)
+    window._win.geometry(f"{round(720 * window._win._get_window_scaling())}x700")  # The narrowest it goes
+    root.update()
+    row = next(w for w in _walk(window._pages["Meetings"]) if isinstance(w, FlowRow))
+    buttons = [w for w in row.winfo_children() if w is not row._canvas]
+    assert [b.cget("text") for b in buttons][-1] == "Delete"
+    assert all(b.winfo_x() + b.winfo_width() <= row.winfo_width() for b in buttons)
+    window._win.destroy()
+
+
+def test_cards_keep_their_bottom_border_clear(root, tmp_path):
+    from ui.tray_panel import TrayPanel
+    from usage_stats import UsageStats
+    for n in range(3):
+        make_meeting(tmp_path, f"2026-11-2{n} 0900", f"2026-11-2{n}T09:00:00", f"Meeting {n}",
+                     lines=[("Me", "Hello.")])
+    stats = UsageStats(tmp_path / "stats.json")
+    stats.record("one two three", 2)  # Dictated today: the card ends with the numbers
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [],
+                            meetings=FakeRecorder(), stats=stats)
+    window.show()
+    panel = TrayPanel(root, FakePanelApp(), stats, lambda: {"usage_stats": True}, lambda: str(tmp_path))
+    panel.show(anchor=(800, 2000))
+    root.update()
+    try:
+        cards = [w for frame in (window._pages["Home"], panel._frame) for w in _walk(frame)
+                 if isinstance(w, ctk.CTkFrame) and w.cget("border_width") == 1]
+        assert len(cards) >= 4  # Home's stat cards, heatmap and recent meetings; the tray's stats
+        for card in cards:
+            _assert_bottom_border_clear(card)
+    finally:
+        panel.close()
+        window._win.destroy()

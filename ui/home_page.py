@@ -278,8 +278,10 @@ class HomePage:
             return
         my_name = self._config().get("meeting_my_name", "")
         for item in items:
-            self._meeting_row(card, item, my_name)
-        ctk.CTkFrame(card, fg_color="transparent", height=8).pack()
+            row = self._meeting_row(card, item, my_name)
+        # Bottom space is the last row's padding, not a spacer frame: a child touching the
+        # card's edge paints over its 1 px border (#107).
+        row.pack_configure(pady=(1, 9))
 
     def _meeting_row(self, card, item, my_name):
         row = ctk.CTkFrame(card, fg_color="transparent", corner_radius=8, cursor="hand2")
@@ -323,6 +325,7 @@ class HomePage:
             widget.bind("<Button-1>", lambda _e: self._open_meeting(folder), add="+")
             widget.bind("<Enter>", enter, add="+")
             widget.bind("<Leave>", leave, add="+")
+        return row
 
     @staticmethod
     def _paint_faces(canvas, people, background, scale):
