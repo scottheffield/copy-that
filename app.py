@@ -826,7 +826,7 @@ class GUIApp:
             return
         self._config["meeting_my_name"] = name
         if self._settings_win:  # It keeps its own copy; Apply would otherwise put the old one back
-            self._settings_win._config["meeting_my_name"] = name
+            self._settings_win.config_changed("meeting_my_name", name)
         self._save_quietly()
 
     def meeting_in_use(self, folder):
@@ -980,7 +980,7 @@ class GUIApp:
         old = self._config["meetings_dir"]
         self._config["meetings_dir"] = str(Path(folder))
         if self._settings_win:  # It keeps its own copy; Apply would otherwise put the old folder back
-            self._settings_win._config["meetings_dir"] = self._config["meetings_dir"]
+            self._settings_win.config_changed("meetings_dir", self._config["meetings_dir"])
         self._save_quietly()
         log("Meeting: meetings folder changed" + (", moving meetings" if move else ""))
         if not move:

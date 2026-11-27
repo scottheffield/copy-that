@@ -601,7 +601,8 @@ class SettingsWindow:
             ("Literal mode", self._literal_var, "Pastes exactly what was heard: no dictionary, rules or Polish."),
             ("Spoken commands", self._commands_var,
              "Experimental. Say “new line”, “new paragraph” or “scratch that”."),
-            ("Save takes for replay", self._log_var, "Keeps each take's audio and text on this PC, for testing."),
+            ("Save takes for replay", self._log_var,
+             "Keeps each take's audio, text and the names read from the screen on this PC, for testing."),
         ))
         from version import label as version_label
         # The version, and which processor runs speech recognition (the tray menu used to say).
@@ -823,6 +824,16 @@ class SettingsWindow:
             self._cleanup_custom_frame.pack(fill="x", pady=(4, 0))
         else:
             self._cleanup_custom_frame.pack_forget()
+
+    def config_changed(self, key, value):
+        """The app changed a setting outside this window (a meeting rename gave "Me" a name, or
+        the meetings folder moved). Keep this window's copy and any field showing it in step,
+        so Apply doesn't put the old value back. An edit typed into the field is left alone."""
+        old = self._config.get(key)
+        self._config[key] = value
+        if key == "meeting_my_name" and self.is_open and getattr(self, "_name_var", None) is not None:
+            if " ".join(self._name_var.get().split()) == (old or ""):
+                self._name_var.set(value)
 
     def update_status(self, text: str, color: str = "gray60"):
         """Update the status label (called from app.py on state changes)."""
