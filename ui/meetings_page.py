@@ -627,6 +627,10 @@ class MeetingsPage:
         self._detail = None
         self.render()
 
+    def forget_detail(self):
+        """Show the list next time this page is drawn, rather than the meeting left open."""
+        self._detail = None
+
     def _item(self, folder):
         return next((item for item in meetings.list_meetings(folder.parent) if item["folder"] == folder), None)
 
