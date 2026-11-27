@@ -73,6 +73,11 @@ class GUIApp:
         self._icon_photo = ImageTk.PhotoImage(render_app_icon(32))
         self._root.iconphoto(True, self._icon_photo)
 
+        # Usage stats for Home: numbers only, counted on the take worker after the paste (#20)
+        from dictation_engine import CONFIG_DIR
+        from usage_stats import UsageStats
+        self._stats = UsageStats(CONFIG_DIR / "stats.json")
+
         # Engine
         self._engine = DictationApp(config)
         self._engine.add_callback(self._on_state_change)
@@ -301,7 +306,23 @@ class GUIApp:
 
     def _on_state_change(self, state: AppState, data: dict):
         """Engine state changed — schedule UI update on main thread."""
+        if data.get("text") and "seconds" in data and self._config.get("usage_stats", True):
+            try:
+                self._stats.record(data["text"], data["seconds"])
+            except OSError as error:
+                log(f"Couldn't save usage stats ({type(error).__name__})")
+            self._events.put(("action", self._refresh_home))
         self._events.put(("state", (state, data)))
+
+    def _refresh_home(self):
+        if self._settings_win:
+            self._settings_win.refresh_home()
+
+    def reset_stats(self):
+        """Settings' Reset stats: forget every count."""
+        self._stats.reset()
+        log("Usage stats reset")
+        self._refresh_home()
 
     def _drain_events(self):
         if self._closing:
@@ -449,6 +470,7 @@ class GUIApp:
         self._settings_win = SettingsWindow(
             self._root, self._config, devices, on_apply=self._on_settings_apply, models=self,
             history=lambda: self._engine.history, on_page_change=self._on_page_change, meetings=self,
+            stats=self._stats,
         )
         self._root.after(0, lambda: self._settings_win.show(page))
 
@@ -698,6 +720,7 @@ class GUIApp:
         self._rename_waiting_folders()
         if self._settings_win:
             self._settings_win.refresh_meetings()
+            self._settings_win.refresh_home()
 
     # -- Folder names follow titles (#57) ---------------------------------------
 

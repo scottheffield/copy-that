@@ -81,7 +81,8 @@ DEFAULT_CONFIG = {
     "meeting_my_name": "",           # The name last given to Me; new meetings use it (#44)
     "meeting_chip_position": None,   # [right, top] in screen px once the chip is dragged
     "meeting_consent_seen": False,   # The consent note shows under the chip until dismissed
-    "main_window_page": "Meetings",  # Page the tray's left-click reopens: Meetings, Dictation, Dictionary or a settings tab
+    "main_window_page": "Home",      # The last page used; a plain open lands on Home, Settings reopens its last tab
+    "usage_stats": True,             # Count words and speaking time for Home; numbers only, in stats.json
 }
 
 # Model registry: pre-exported models from Hugging Face, pinned to tested revisions.

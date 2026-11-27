@@ -261,7 +261,7 @@ class TakeQueue:
                 message = "" if pasted or not take.text else "Not pasted: press Shift+Alt+Z to paste it"
                 self._save_result(take)
                 self._notify(text=take.text, message=message, take_id=take.id, retained=take.status == "retained",
-                             pasted=pasted,
+                             pasted=pasted, seconds=len(take.audio) / take.config["sample_rate"],
                              timings=take.timings.copy(), fallback=take.fallback)
             except Exception:
                 if take is not None:
