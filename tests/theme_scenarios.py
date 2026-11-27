@@ -155,6 +155,21 @@ def test_sidebar_runs_to_the_bottom_beside_the_button_bar(root):
     window._win.destroy()
 
 
+def test_a_name_given_elsewhere_survives_apply(root):
+    """Naming "Me" on a meeting while Settings is open: Apply must keep the new name,
+    but an edit typed into Your name is the user's and wins."""
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meeting_my_name": "Al"}, [])
+    window.show("General")
+    window.config_changed("meeting_my_name", "Alex")
+    assert window._name_var.get() == "Alex" and window._get_new_config()["meeting_my_name"] == "Alex"
+    window._name_var.set("Typed")
+    window.config_changed("meeting_my_name", "Sam")
+    assert window._get_new_config()["meeting_my_name"] == "Typed"
+    window.config_changed("meetings_dir", "D:/Meetings")
+    assert window._get_new_config()["meetings_dir"] == "D:/Meetings"
+    window._win.destroy()
+
+
 def test_plain_open_lands_on_home_and_settings_keeps_its_tab(root):
     window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "Meeting settings"}, [])
     window.show()

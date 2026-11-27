@@ -36,7 +36,8 @@ def test_changing_the_folder_moves_meetings_and_updates_settings(gui, tmp_path):
     drain(gui)
     assert results == [(1, 0)] and not gui.meetings_busy()
     assert (new / "2026-11-24 1300" / "meta.json").exists()
-    assert gui._config["meetings_dir"] == str(new) == gui._settings_win._config["meetings_dir"]
+    assert gui._config["meetings_dir"] == str(new)
+    gui._settings_win.config_changed.assert_called_with("meetings_dir", str(new))
     assert gui._saved[-1]["meetings_dir"] == str(new)
 
 

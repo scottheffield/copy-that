@@ -4,7 +4,8 @@ and from the text visible in the window.
 People multitask, so "the last ten minutes" mixes topics; takes are grouped by
 destination (window and focused box) instead. Only terms travel, never whole
 takes: Polish is less likely to copy them in, and the prompt stays short.
-Terms live in memory only and are never logged.
+Terms live in memory only and are never logged, except in a take's record when
+Save takes for replay is on (off by default), so replay can reproduce Polish.
 """
 import re
 import time
