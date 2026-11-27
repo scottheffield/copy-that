@@ -2,7 +2,10 @@
 
 <img src="docs/icon.png" alt="CopyThat icon: a blue speech bubble with a yellow check" width="96">
 
-A local Windows dictation app. Dictate into text fields in browsers, email, chat, documents, editors, and other desktop apps, with no destination-specific integration required. It also records meetings in any meeting app and transcribes who said what, all on your PC ([Meetings](#meetings)).
+CopyThat turns speech into text on your own Windows PC, for the two places you talk most: at your keyboard and in meetings. Nothing is uploaded.
+
+- **Dictation.** Hold Ctrl+Win, speak, and let go. Your words appear wherever you were typing: email, chat, documents, browsers, code editors. No per-app setup. Optional **Polish** fixes punctuation, stutters, and mid-sentence corrections. See [Use](#use).
+- **Meetings.** Click **Record meeting** during a call in any meeting app. Nothing joins the call. You get a transcript that labels who said what, lets you name the speakers, and plays back from any line. See [Meetings](#meetings).
 
 <img src="docs/screenshots/home-dark.png" alt="The Home page: a greeting, words dictated, speaking speed, time saved, a six-month streak heatmap and recent meetings" width="600">
 
