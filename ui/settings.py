@@ -115,7 +115,8 @@ class SettingsWindow:
     """The main window. Dictation and Meetings sit above the settings pages; Apply shows only on settings pages."""
 
     def __init__(self, root: ctk.CTk, config: dict, input_devices: list[dict],
-                 on_apply=None, models=None, history=None, on_page_change=None, meetings=None, stats=None):
+                 on_apply=None, models=None, history=None, on_page_change=None, meetings=None, stats=None,
+                 startup=None):
         """
         Args:
             root: Parent CTk window.
@@ -128,7 +129,10 @@ class SettingsWindow:
             meetings: Provides retranscribe_meeting(folder) and meeting_in_use(folder).
             stats: The UsageStats shown on Home; the app's reset_stats clears it.
             on_page_change: Callback(page_name) so the app can reopen at the last page.
+            startup: (enabled, set_enabled) for Start with Windows. set_enabled is None
+                where it can't change, such as a dev build; without it, no checkbox.
         """
+        self._startup = startup
         self._root = root
         self._config = dict(config)
         self._input_devices = input_devices
@@ -567,6 +571,22 @@ class SettingsWindow:
             ("Add a space after each dictation", self._space_var, "Not when Enter is pressed after pasting."),
             ("Show your words in the bubble", self._balloon_var, "Live while you speak, then the result."),
         ))
+        self._startup_var = None
+        if self._startup:
+            # Read from Windows, not config: the installer can turn it on too.
+            is_on, set_on = self._startup
+            ctk.CTkLabel(scroll, text="Startup", text_color=theme.TEXT,
+                font=ctk.CTkFont(size=13, weight="bold")).pack(padx=20, pady=(4, 0), anchor="w")
+            startup_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+            startup_frame.pack(padx=20, pady=(0, 4), fill="x")
+            self._startup_var = ctk.BooleanVar(value=bool(is_on()))
+            checkboxes(startup_frame, (
+                ("Start CopyThat when Windows starts", self._startup_var,
+                 "It waits in the tray, ready to dictate." if set_on else "Only in the installed app."),
+            ))
+            if not set_on:
+                next(w for w in startup_frame.winfo_children()
+                     if isinstance(w, ctk.CTkCheckBox)).configure(state="disabled")
         ctk.CTkLabel(scroll, text="Usage stats", text_color=theme.TEXT,
             font=ctk.CTkFont(size=13, weight="bold")).pack(padx=20, pady=(4, 0), anchor="w")
         stats_frame = ctk.CTkFrame(scroll, fg_color="transparent")
@@ -941,12 +961,30 @@ class SettingsWindow:
                 new_config["device"] = "CPU"
         return new_config
 
+    def _apply_startup(self):
+        """Turn Start with Windows on or off if the checkbox changed. False if Windows refused."""
+        if self._startup_var is None or self._startup[1] is None:
+            return True
+        is_on, set_on = self._startup
+        wanted = self._startup_var.get()
+        if wanted == bool(is_on()):
+            return True
+        try:
+            set_on(wanted)
+        except OSError:
+            self._startup_var.set(not wanted)
+            self.update_status("Could not change Start with Windows.", "#FF453A")
+            return False
+        return True
+
     def _apply(self):
         """Apply settings without closing the window."""
         try:
             new_config = self._get_new_config()
         except ValueError as error:
             self.update_status(str(error), "#FF453A")
+            return
+        if not self._apply_startup():
             return
         if self._on_apply:
             self._on_apply(new_config)

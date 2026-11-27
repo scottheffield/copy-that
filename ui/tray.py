@@ -20,7 +20,6 @@ class TrayManager:
     """Manages the system tray icon and context menu."""
 
     def __init__(self, on_toggle, on_quit, on_settings=None, on_history=None, on_open=None,
-                 on_startup=None, startup_enabled=None,
                  on_meeting=None, meeting_recording=None, on_meetings_folder=None,
                  on_meeting_mute=None, meeting_muted=None, on_panel=None, meeting_line=None):
         self._on_panel = on_panel
@@ -35,8 +34,6 @@ class TrayManager:
         self._on_settings = on_settings
         self._on_history = on_history
         self._on_open = on_open
-        self._on_startup = on_startup
-        self._startup_enabled = startup_enabled
         self._state = "loading"
         self.status = "Loading…"
         self._icon: pystray.Icon | None = None
@@ -44,13 +41,22 @@ class TrayManager:
 
     def _build_menu(self):
         """Build the right-click context menu with dynamic state text."""
-        items = [
-            pystray.MenuItem(
-                lambda _: "Stop Recording" if self._state == "recording" else "Start Recording",
-                self._on_toggle_click,
-                enabled=lambda _: self._state in ("ready", "recording", "processing"),
-            ),
-        ]
+        items = []
+        if self._on_open:
+            # The plain way into the main window, first as in other Windows tray menus. It is
+            # also the left-click action, shown bold, unless the tray panel has left-click.
+            items += [pystray.MenuItem("Open CopyThat", lambda: self._on_open(), default=not self._on_panel),
+                      pystray.Menu.SEPARATOR]
+        # Dictation, then meetings, then settings: each group with what it opens.
+        items.append(pystray.MenuItem(
+            lambda _: "Stop dictation" if self._state == "recording" else "Start dictation",
+            self._on_toggle_click,
+            enabled=lambda _: self._state in ("ready", "recording", "processing"),
+        ))
+        if self._on_history:
+            items.append(pystray.MenuItem("Dictation history", lambda: self._on_history()))
+        if self._on_meeting or self._on_meetings_folder:
+            items.append(pystray.Menu.SEPARATOR)
         if self._on_meeting:
             items.append(pystray.MenuItem(
                 lambda _: "Stop meeting recording" if self._meeting_recording() else "Record meeting",
@@ -62,27 +68,15 @@ class TrayManager:
                 checked=lambda _: self._meeting_muted(), visible=lambda _: self._meeting_recording()))
         if self._on_meetings_folder:
             items.append(pystray.MenuItem("Open meetings folder", lambda: self._on_meetings_folder()))
-        items.append(pystray.Menu.SEPARATOR)
-
-        if self._on_history:
-            items.append(pystray.MenuItem("Dictation history", lambda: self._on_history()))
-
         if self._on_settings:
-            items.append(pystray.MenuItem("Settings", lambda: self._on_settings(),
-                                          default=self._on_open is None))
+            # Start with Windows is in Settings > General, not here.
+            items += [pystray.Menu.SEPARATOR,
+                      pystray.MenuItem("Settings", lambda: self._on_settings(), default=self._on_open is None)]
         if self._on_panel:
             # Left-click opens the tray panel (#90); it never starts a recording. Hidden from
-            # the menu, which stays as it was.
+            # the menu, which has Open CopyThat for the main window.
             items.append(pystray.MenuItem("CopyThat panel", lambda: self._on_panel(),
                                           default=True, visible=False))
-        elif self._on_open:
-            # Left-click opens the main window at the last page used. Hidden from the menu,
-            # which already has Dictation history and Settings.
-            items.append(pystray.MenuItem("Open CopyThat", lambda: self._on_open(),
-                                          default=True, visible=False))
-        if self._on_startup:
-            items.append(pystray.MenuItem("Start with Windows", lambda: self._on_startup(),
-                                          checked=lambda _: self._startup_enabled()))
 
         items.extend([
             pystray.Menu.SEPARATOR,

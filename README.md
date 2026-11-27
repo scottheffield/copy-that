@@ -24,7 +24,7 @@ Developed and tested on Windows 11 with an Intel GPU and NPU. On a PC without an
 3. Open CopyThat from the Start menu. The welcome window downloads the speech and Polish models, about 4.8 GB in total.
 4. Click into any text field, hold Ctrl+Win, speak, and let go.
 
-You don't need Python or PowerShell. Setup offers an unchecked **Start with Windows** option, and you can change it later from the tray icon's right-click menu.
+You don't need Python or PowerShell. Setup offers an unchecked **Start with Windows** option, and you can change it later in Settings > General.
 
 If CopyThat is already running, launching it again exits quietly; use the existing tray icon.
 
@@ -47,7 +47,7 @@ The app lives in the system tray. The floating pill is hidden while idle. While 
 
 Up to three unfinished takes can overlap. Processing and pasting remain ordered. Each pasted take ends with a space so the next take starts a new word. Existing trailing whitespace is preserved and auto-submit omits the added space. History keeps the transcript without the added separator. Recordings stop at 5 minutes by default, with a low double pluck 15 seconds before the limit. Audio cues: a pluck once the microphone is actually delivering audio, a lower pluck on release, and a rising two-note pluck when text is pasted. Silence detection rejects takes without enough detected speech before recognition.
 
-**Tray panel.** Left-click the tray icon for a small panel above it. It has **Record meeting** (with **Mute mic** while one records), your words, speaking speed and streak, and your last three meetings, which you can rename in place or open. Escape or a click elsewhere closes it. Right-click the icon for the menu.
+**Tray panel.** Left-click the tray icon for a small panel above it. It has **Record meeting** (with **Mute mic** while one records), your words, speaking speed and streak, and your last three meetings, which you can rename in place or open. Escape or a click elsewhere closes it. Right-click the icon for the menu; its first item, **Open CopyThat**, opens the main window.
 
 <img src="docs/screenshots/tray-dark.png" alt="The tray panel: Record meeting, words, wpm and streak, and the last three meetings with Folder and Open" width="320">
 
