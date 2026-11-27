@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 from ui import theme
+from ui.controls import Dropdown, ScrollPage
 from ui.model_cards import ModelCard
 
 _HEADER_BG = _CONTENT_BG = theme.BG
@@ -15,9 +16,6 @@ _DESC_TEXT = theme.MUTED
 _CARD_BG = _BTN_SEC_BG = theme.SURFACE
 _CARD_BORDER = _INPUT_BORDER = theme.BORDER
 _INPUT_BG = theme.FIELD
-_ACCENT = theme.ACCENT
-_ACCENT_HOVER = theme.ACCENT_HOVER
-_BTN_SEC_HOVER = theme.SELECTED
 
 
 def _make_wide_dropdown(om, values, on_select):
@@ -219,14 +217,6 @@ class SettingsWindow:
 
         pad ={"padx": 20, "pady": (10, 0)}
 
-        # Shared dropdown styling
-        dd_opts = dict(
-            fg_color=_INPUT_BG, button_color=_ACCENT,
-            button_hover_color=_ACCENT_HOVER, text_color=_SECTION_TEXT,
-            dropdown_fg_color=_INPUT_BG, dropdown_hover_color=_CARD_BG,
-            dropdown_text_color=_SECTION_TEXT,
-        )
-
         # --- Bottom bar (packed first to reserve space) ---
         bottom = ctk.CTkFrame(self._win, fg_color=_CONTENT_BG)
         bottom.pack(side="bottom", fill="x")
@@ -237,11 +227,11 @@ class SettingsWindow:
         btn_frame.pack(padx=20, pady=(6, 8), fill="x")
         self._apply_btn = ctk.CTkButton(
             btn_frame, text="Apply changes", command=self._apply, width=100,
-            fg_color=_ACCENT, hover_color=_ACCENT_HOVER, text_color=theme.ON_ACCENT,
+            fg_color=theme.ACCENT, hover_color=theme.ACCENT_HOVER, text_color=theme.ON_ACCENT,
         )
         self._close_btn = ctk.CTkButton(
             btn_frame, text="Close", command=self._close, width=100,
-            fg_color=_BTN_SEC_BG, hover_color=_BTN_SEC_HOVER,
+            fg_color=_BTN_SEC_BG, hover_color=theme.SELECTED,
             text_color=_BTN_SEC_TEXT, border_color=_CARD_BORDER, border_width=1,
         )
         self._close_btn.pack(side="right")
@@ -256,12 +246,13 @@ class SettingsWindow:
         sidebar = ctk.CTkFrame(body, fg_color=theme.SURFACE, width=164, corner_radius=0)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
+        self._sidebar = sidebar
         container = ctk.CTkFrame(body, fg_color=_CONTENT_BG)
         container.pack(side="left", fill="both", expand=True)
         self._pages, self._nav_buttons = {}, {}
 
         def scrolling(parent):
-            return ctk.CTkScrollableFrame(parent, fg_color=_CONTENT_BG,
+            return ScrollPage(parent, fg_color=_CONTENT_BG,
                 scrollbar_button_color=_CARD_BORDER, scrollbar_button_hover_color=_INPUT_BORDER)
 
         def page_title(page, title, description):
@@ -321,11 +312,29 @@ class SettingsWindow:
         ctk.CTkLabel(scroll, text="Appearance", text_color=theme.TEXT,
             font=ctk.CTkFont(size=13, weight="bold")).pack(**pad, anchor="w")
         self._theme_var = ctk.StringVar(value=self._config.get("theme", "system").title())
-        self._theme_dropdown = ctk.CTkOptionMenu(scroll, values=["System", "Light", "Dark"],
-            variable=self._theme_var, **dd_opts)
+        self._theme_dropdown = Dropdown(scroll, values=["System", "Light", "Dark"],
+            variable=self._theme_var)
         self._theme_dropdown.pack(padx=20, pady=4, fill="x")
         ctk.CTkLabel(scroll, text="System follows Windows, including changes while the app is running.",
             text_color=theme.MUTED, wraplength=460, justify="left").pack(padx=20, anchor="w")
+        ctk.CTkLabel(scroll, text="Highlight color", text_color=theme.TEXT,
+            font=ctk.CTkFont(size=13, weight="bold")).pack(**pad, anchor="w")
+        self._highlight_var = ctk.StringVar(value=self._config.get("highlight", "blue"))
+        swatch_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        swatch_row.pack(padx=20, pady=(6, 0), anchor="w")
+        self._swatches = {}
+        for key, info in theme.HIGHLIGHTS.items():
+            cell = ctk.CTkFrame(swatch_row, fg_color="transparent")
+            cell.pack(side="left", padx=(0, 18))
+            swatch = ctk.CTkButton(cell, text="", width=30, height=30, corner_radius=15, border_width=2,
+                fg_color=info["ACCENT"], hover_color=info["ACCENT_HOVER"],
+                command=lambda k=key: self._pick_highlight(k))
+            swatch.keep_colors = True  # theme.recolor leaves the swatches alone
+            swatch.pack()
+            ctk.CTkLabel(cell, text=info["name"], text_color=theme.MUTED, height=18,
+                font=ctk.CTkFont(size=12)).pack(pady=(2, 0))
+            self._swatches[key] = swatch
+        self._paint_swatches()
         scroll = self._pages["Speech"]
 
         # --- Language dropdown ---
@@ -341,9 +350,9 @@ class SettingsWindow:
         current_display = LANGUAGES.get(current_lang, current_lang)
 
         self._lang_var = ctk.StringVar(value=current_display)
-        self._lang_dropdown = ctk.CTkOptionMenu(
+        self._lang_dropdown = Dropdown(
             scroll, values=lang_display, variable=self._lang_var,
-            command=self._on_language_change, **dd_opts,
+            command=self._on_language_change,
         )
         self._lang_dropdown.pack(padx=20, pady=(4, 0), fill="x")
 
@@ -400,14 +409,14 @@ class SettingsWindow:
                      text_color=_SECTION_TEXT).pack(fill="x", pady=(4, 0))
         ctk.CTkLabel(scroll, text="When to polish", fg_color="transparent",
                      font=ctk.CTkFont(size=13, weight="bold"), text_color=_SECTION_TEXT).pack(**pad, anchor="w")
-        self._cleanup_when_dropdown = ctk.CTkOptionMenu(
-            scroll, values=list(self._cleanup_when), variable=self._cleanup_when_var, **dd_opts,
+        self._cleanup_when_dropdown = Dropdown(
+            scroll, values=list(self._cleanup_when), variable=self._cleanup_when_var,
         )
         self._cleanup_when_dropdown.pack(padx=20, pady=(4, 12), fill="x")
         self._screen_var = ctk.BooleanVar(value=self._config.get("screen_context", True))
         ctk.CTkCheckBox(scroll, text="Use names on screen (file names, people) to fix spelling",
-                        variable=self._screen_var, fg_color=_ACCENT, border_color=_INPUT_BORDER,
-                        hover_color=_ACCENT_HOVER, text_color=_SECTION_TEXT,
+                        variable=self._screen_var, fg_color=theme.ACCENT, border_color=_INPUT_BORDER,
+                        hover_color=theme.ACCENT_HOVER, text_color=_SECTION_TEXT,
                         checkmark_color=theme.ON_ACCENT).pack(padx=20, anchor="w")
         ctk.CTkLabel(scroll, text="Reads the window's text while you talk, on this PC. "
                      "Turn off on slower computers.", text_color=_DESC_TEXT, anchor="w", justify="left",
@@ -442,8 +451,8 @@ class SettingsWindow:
                  next((d for d in self._input_devices if d["index"] == self._config.get("input_device")), None))
         selected_mic = saved.get("label", saved["name"]) if saved else "(default)"
         self._mic_var = ctk.StringVar(value=selected_mic)
-        self._mic_dropdown = ctk.CTkOptionMenu(
-            scroll, values=mic_names, variable=self._mic_var, **dd_opts,
+        self._mic_dropdown = Dropdown(
+            scroll, values=mic_names, variable=self._mic_var,
         )
         self._mic_dropdown.pack(padx=20, pady=(4, 0), fill="x")
 
@@ -455,8 +464,8 @@ class SettingsWindow:
         font_sizes = ["12", "14", "16", "18", "20", "24"]
         self._font_size_var = ctk.StringVar(
             value=str(self._config.get("balloon_font_size", 16)))
-        self._font_size_dropdown = ctk.CTkOptionMenu(
-            scroll, values=font_sizes, variable=self._font_size_var, **dd_opts,
+        self._font_size_dropdown = Dropdown(
+            scroll, values=font_sizes, variable=self._font_size_var,
         )
         self._font_size_dropdown.pack(padx=20, pady=(4, 0), fill="x")
 
@@ -473,8 +482,8 @@ class SettingsWindow:
         self._bubble_var = ctk.StringVar(
             value=next((label for label, value in self._bubble_choices.items() if value == position),
                        next(iter(self._bubble_choices))))
-        self._bubble_dropdown = ctk.CTkOptionMenu(
-            scroll, values=list(self._bubble_choices), variable=self._bubble_var, **dd_opts,
+        self._bubble_dropdown = Dropdown(
+            scroll, values=list(self._bubble_choices), variable=self._bubble_var,
         )
         self._bubble_dropdown.pack(padx=20, pady=(4, 0), fill="x")
 
@@ -492,8 +501,8 @@ class SettingsWindow:
         level = self._config.get("dictation_priority", "above_normal")
         self._priority_var = ctk.StringVar(
             value=next((label for label, value in self._priority_choices.items() if value == level), "Normal"))
-        self._priority_dropdown = ctk.CTkOptionMenu(
-            scroll, values=list(self._priority_choices), variable=self._priority_var, **dd_opts,
+        self._priority_dropdown = Dropdown(
+            scroll, values=list(self._priority_choices), variable=self._priority_var,
         )
         self._priority_dropdown.pack(padx=20, pady=(4, 0), fill="x")
         ctk.CTkLabel(scroll, text="Applies from the hotkey until the paste; normal the rest of the time.",
@@ -506,8 +515,8 @@ class SettingsWindow:
         toggles_frame.pack(padx=20, pady=(10, 10), fill="x")
 
         chk_opts = dict(
-            fg_color=_ACCENT, border_color=_INPUT_BORDER,
-            hover_color=_ACCENT_HOVER, text_color=_SECTION_TEXT,
+            fg_color=theme.ACCENT, border_color=_INPUT_BORDER,
+            hover_color=theme.ACCENT_HOVER, text_color=_SECTION_TEXT,
             checkmark_color=theme.ON_ACCENT,
         )
         def checkboxes(frame, rows):
@@ -612,13 +621,37 @@ class SettingsWindow:
             anchor="w", width=140, height=40, fg_color="transparent", hover_color=theme.SELECTED,
             text_color=theme.TEXT, font=ctk.CTkFont(size=14), command=click)
 
+    def _pick_highlight(self, key):
+        self._highlight_var.set(key)
+        self._paint_swatches()
+
+    def _paint_swatches(self):
+        """Ring the chosen swatch; the others get a ring in the page color, so none shifts."""
+        for key, swatch in self._swatches.items():
+            swatch.configure(border_color=theme.TEXT if key == self._highlight_var.get() else _CONTENT_BG)
+
+    def refresh_highlight(self):
+        """The highlight color changed: redraw what theme.recolor can't reach (icons, plain Tk lines)."""
+        if not self.is_open:
+            return
+        for name, button in self._nav_buttons.items():
+            button.destroy()
+        sidebar = self._sidebar
+        for name in NAV_PAGES:
+            self._nav_buttons[name] = self._nav_button(sidebar, name)
+            self._nav_buttons[name].pack(padx=12, pady=(16 if name == NAV_PAGES[0] else 3, 3))
+        self._nav_buttons["Settings"] = self._nav_button(sidebar, "Settings")
+        self._nav_buttons["Settings"].pack(side="bottom", padx=12, pady=16)
+        page, self._page = self._page, None  # Reselect without telling the app it changed
+        self._select_page(page)
+
     def _paint_tabs(self):
         """Underline the open settings tab; the rule and lines are plain Tk, so repaint them by hand."""
         self._tab_rule.configure(bg=theme.color(_CARD_BORDER))
         for key, (button, line) in self._tabs.items():
             selected = key == self._page
             button.configure(text_color=theme.TEXT if selected else theme.MUTED)
-            line.configure(bg=theme.color(_ACCENT if selected else _CONTENT_BG))
+            line.configure(bg=theme.color(theme.ACCENT if selected else _CONTENT_BG))
 
     def _select_page(self, name):
         name = RENAMED_PAGES.get(name, name)
@@ -778,6 +811,7 @@ class SettingsWindow:
         """Build new config dict from current UI state."""
         new_config = dict(self._config)
         new_config["theme"] = self._theme_var.get().lower()
+        new_config["highlight"] = self._highlight_var.get()
         new_config["model_size"] = self._model_radio_var.get()
         new_config["hotkey"] = self._hotkey_var.get().strip()
         new_config["language"] = self._get_selected_lang_code()

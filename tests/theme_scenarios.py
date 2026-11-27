@@ -178,6 +178,102 @@ def test_apply_theme_does_not_reload_engine():
     app._theme_controller.set_mode.assert_called_once_with("dark")
 
 
+def test_highlight_validation():
+    assert DEFAULT_CONFIG["highlight"] == "blue"
+    for name in theme.HIGHLIGHTS:
+        validate_config({**DEFAULT_CONFIG, "highlight": name})
+    with pytest.raises(ValueError, match="highlight"):
+        validate_config({**DEFAULT_CONFIG, "highlight": "yellow"})
+
+
+def test_highlight_recolors_the_open_window_in_place(root):
+    settings = SettingsWindow(root, dict(DEFAULT_CONFIG), [])
+    settings.show("General")
+    win = settings._win
+    try:
+        settings._pick_highlight("violet")
+        assert settings._get_new_config()["highlight"] == "violet"
+        assert settings._swatches["violet"].cget("border_color") == theme.TEXT
+        theme.recolor(root, theme.set_highlight("violet"))
+        settings.refresh_highlight()
+        violet = theme.HIGHLIGHTS["violet"]
+        assert settings._win is win  # Same window, recolored
+        assert settings._apply_btn.cget("fg_color") == violet["ACCENT"]
+        assert settings._nav_buttons["Settings"].cget("fg_color") == violet["SELECTED"]
+        assert settings._swatches["blue"].cget("fg_color") == theme.HIGHLIGHTS["blue"]["ACCENT"]
+        assert settings.page == "General"
+        settings._paint_tabs()
+        line = settings._tabs["General"][1]
+        assert line.cget("bg") == theme.color(violet["ACCENT"])
+    finally:
+        theme.recolor(root, theme.set_highlight("blue"))
+        win.destroy()
+    assert theme.ACCENT == theme.HIGHLIGHTS["blue"]["ACCENT"]
+
+
+def test_apply_highlight_does_not_reload_engine(root):
+    from app import GUIApp
+    from dictation_engine import AppState
+    app = GUIApp.__new__(GUIApp)
+    app._config = dict(DEFAULT_CONFIG)
+    app._engine = MagicMock(active=False, state=AppState.READY)
+    app._root, app._overlay, app._chip, app._tray = root, MagicMock(), MagicMock(), MagicMock()
+    app._settings_win, app._welcome = None, None
+    app._engine_started, app._offer_delete = True, []
+    app._theme_controller = MagicMock()
+    try:
+        with patch("app.save_config"):
+            app._on_settings_apply({**DEFAULT_CONFIG, "highlight": "teal"})
+        assert theme.ACCENT == theme.HIGHLIGHTS["teal"]["ACCENT"]
+        app._overlay.set_theme.assert_called_once()  # The bubble's waveform takes the new color
+        app._engine.stop.assert_not_called()
+    finally:
+        theme.set_highlight("blue")
+
+
+def test_scroll_page_shows_its_bar_only_when_it_overflows(root):
+    from ui.controls import ScrollPage
+    window = ctk.CTkToplevel(root)
+    window.geometry("300x200")
+    try:
+        page = ScrollPage(window)
+        page.pack(fill="both", expand=True)
+        ctk.CTkLabel(page, text="One line").pack()
+        window.update()
+        assert not page._bar_shown and not page._scrollbar.grid_info()
+        for n in range(30):
+            ctk.CTkLabel(page, text=f"Line {n}").pack()
+        window.update()
+        assert page._bar_shown and page._scrollbar.grid_info()
+    finally:
+        window.destroy()
+
+
+def test_dropdown_has_a_border_and_a_quiet_arrow(root):
+    from ui.controls import Dropdown
+    window = ctk.CTkToplevel(root)
+    try:
+        menu = Dropdown(window, values=["One", "Two"])
+        menu.pack(fill="x")
+        window.update_idletasks()
+        arrow = lambda: menu._canvas.itemcget("dropdown_arrow", "fill")
+        assert menu._box.cget("border_width") == 1
+        assert menu.cget("button_color") == theme.FIELD  # No accent square
+        assert arrow() == theme.color(theme.MUTED)
+        menu._on_enter()
+        assert arrow() == theme.color(theme.TEXT)
+        assert menu._box.cget("border_color") == theme.MUTED
+        menu._on_leave()
+        assert arrow() == theme.color(theme.MUTED)
+        menu.configure(state="disabled")
+        menu._on_enter()
+        assert not menu._hovering
+        menu.pack_forget()
+        assert not menu._box.winfo_manager()
+    finally:
+        window.destroy()
+
+
 class FakeModels:
     """Model provider for card scenarios: parakeet and 4B installed, small downloading."""
     def __init__(self):

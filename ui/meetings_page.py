@@ -172,7 +172,8 @@ class MeetingsPage:
     def __init__(self, page, root, meetings_dir, provider=None, status=None):
         self._outer, self._root = page, root
         self._header = ctk.CTkFrame(page, fg_color="transparent")
-        self._page = ctk.CTkScrollableFrame(page, fg_color="transparent",
+        from ui.controls import ScrollPage
+        self._page = ScrollPage(page, fg_color="transparent",
                                             scrollbar_button_color=theme.BORDER,
                                             scrollbar_button_hover_color=theme.MUTED)
         self._page.pack(fill="both", expand=True)
