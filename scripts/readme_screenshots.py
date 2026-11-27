@@ -1,14 +1,15 @@
 """Take the README screenshots from the real windows, filled with made-up data.
 
-    python scripts/readme_screenshots.py            # light and dark
-    python scripts/readme_screenshots.py --theme dark
+    python scripts/readme_screenshots.py              # dark, as the README uses
+    python scripts/readme_screenshots.py --theme light
+    python scripts/readme_screenshots.py --theme both
 
 Each theme runs in its own process with a throwaway data folder (COPYTHAT_DATA_DIR),
 so your own history, meetings and stats are never read or shown. The people, company
 and meetings below are invented. Windows open briefly on screen while they are
 captured; the pointer moves to a corner of the screen and back so nothing shows hover.
 
-Writes docs/screenshots/{home,meetings,meeting,pill,tray}-{light,dark}.png.
+Writes docs/screenshots/{home,meeting,pill,tray}-<theme>.png.
 Needs a desktop session, so it isn't part of the tests.
 """
 import argparse
@@ -26,7 +27,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "screenshots"
 THEMES = ("light", "dark")
-SHOTS = ("home", "meetings", "meeting", "pill", "tray")
 
 MY_NAME = "Jordan"
 BACKDROP = {"light": "#DDE3EB", "dark": "#0D1118"}  # Behind each window, so no desktop shows
@@ -293,10 +293,6 @@ def capture(mode, out):
         studio.settle()
         studio.shoot(out / f"home-{mode}.png", main._win)
 
-        main.show("Meetings")
-        studio.settle()
-        studio.shoot(out / f"meetings-{mode}.png", main._win)
-
         main.show_meeting(folders[0])
         studio.settle()
         page = main._meetings_page
@@ -370,7 +366,7 @@ def pill_scene(root, mode, OverlayWindow, theme):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--theme", choices=("both",) + THEMES, default="both")
+    parser.add_argument("--theme", choices=("both",) + THEMES, default="dark")
     parser.add_argument("--out", type=Path, default=OUT)
     parser.add_argument("--capture", choices=THEMES, help=argparse.SUPPRESS)  # One theme, in this process
     args = parser.parse_args()
