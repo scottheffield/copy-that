@@ -143,6 +143,18 @@ def test_one_window_apply_only_on_settings_pages(root):
     window._win.destroy()
 
 
+def test_sidebar_runs_to_the_bottom_beside_the_button_bar(root):
+    window = SettingsWindow(root, dict(DEFAULT_CONFIG), [])
+    window.show("General")
+    window._win.geometry("900x700")  # The saved size is applied later; fix one here
+    root.update()
+    sidebar, win = window._sidebar, window._win
+    # The sidebar reaches the window's bottom edge; the button bar sits in the content column beside it.
+    assert sidebar.winfo_rooty() + sidebar.winfo_height() == win.winfo_rooty() + win.winfo_height()
+    assert window._status_label.winfo_rootx() >= sidebar.winfo_rootx() + sidebar.winfo_width()
+    window._win.destroy()
+
+
 def test_plain_open_lands_on_home_and_settings_keeps_its_tab(root):
     window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "Meeting settings"}, [])
     window.show()
