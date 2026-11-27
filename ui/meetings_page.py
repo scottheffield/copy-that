@@ -7,6 +7,7 @@ import customtkinter as ctk
 
 import meetings
 from ui import theme
+from ui.controls import FlowRow
 from ui.transcript import TranscriptView
 
 SEARCH_DELAY_MS = 250
@@ -294,7 +295,8 @@ class MeetingsPage:
                 fg_color=theme.SURFACE, hover_color=theme.SELECTED, text_color=theme.TEXT,
                 border_color=theme.BORDER, border_width=1)
         button = ctk.CTkButton(parent, text=text, command=command, height=30, width=0, state=state, **options)
-        button.pack(side="left", padx=(0, 8), pady=(0, 8))
+        if not isinstance(parent, FlowRow):  # A FlowRow places its own buttons
+            button.pack(side="left", padx=(0, 8), pady=(0, 8))
         return button
 
     def _open(self, path):
@@ -692,8 +694,9 @@ class MeetingsPage:
             speakers_stopped = False
         # Unfinished work isn't restarted at launch (#66); Re-transcribe is the way on.
         restart = not busy and (item["status"] == "interrupted" or speakers_stopped)
-        actions = ctk.CTkFrame(head, fg_color="transparent")
-        actions.pack(fill="x", padx=20)
+        # Wraps at narrow widths: six buttons don't fit on one line at the default 760 px (#106).
+        actions = FlowRow(head)
+        actions.pack(fill="x", padx=20, pady=(0, 8))
         # Greyed while busy, so the progress bar is the only accent on the page.
         copy = self._button(actions, "Copy as Markdown", None, primary=not restart,
                             state="normal" if text and not busy else "disabled")
@@ -710,6 +713,7 @@ class MeetingsPage:
             progress and progress[0] == "compressing")
         self._button(actions, "Delete", lambda: self._delete(folder, item),
                      state="disabled" if busy else "normal")
+        actions.layout()
         if playable:
             self._render_player(head, folder, item)
         ctk.CTkFrame(head, height=1, fg_color=theme.BORDER).pack(fill="x", padx=20, pady=(8, 12))
