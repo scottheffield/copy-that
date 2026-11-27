@@ -263,6 +263,39 @@ def test_scroll_page_shows_its_bar_only_when_it_overflows(root):
         window.destroy()
 
 
+def test_scroll_page_bar_follows_the_page_without_flushing_layout(root):
+    """The bar no longer forces Tk's layout on every redraw, but still tracks the scroll."""
+    from ui.controls import ScrollPage
+    window = ctk.CTkToplevel(root)
+    window.geometry("300x200")
+    try:
+        page = ScrollPage(window)
+        page.pack(fill="both", expand=True)
+        for n in range(40):
+            ctk.CTkLabel(page, text=f"Line {n}").pack()
+        window.update()
+        page._parent_canvas.yview_moveto(0.5)
+        window.update()
+        top, bottom = page._parent_canvas.yview()
+        assert page._scrollbar.get() == (top, bottom) and 0.4 < top < 0.6
+    finally:
+        window.destroy()
+
+
+def test_a_new_window_takes_its_monitors_scaling_before_it_is_built(root, monkeypatch):
+    from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
+    from ui.screen import adopt_monitor_scaling
+    window = ctk.CTkToplevel(root)
+    try:
+        start = ScalingTracker.window_dpi_scaling_dict[window]
+        monkeypatch.setattr(ScalingTracker, "get_window_dpi_scaling", classmethod(lambda cls, w: start + 0.25))
+        assert adopt_monitor_scaling(window)
+        assert ScalingTracker.window_dpi_scaling_dict[window] == start + 0.25
+        assert not adopt_monitor_scaling(window)  # Already right: nothing to do
+    finally:
+        window.destroy()
+
+
 def test_dropdown_has_a_border_and_a_quiet_arrow(root):
     from ui.controls import Dropdown
     window = ctk.CTkToplevel(root)

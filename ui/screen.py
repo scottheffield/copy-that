@@ -59,3 +59,22 @@ def place(win, width, height, min_width, min_height):
     width, height, min_width, min_height, x, y = fit(area, scaling, width, height, min_width, min_height)
     win.minsize(min_width, min_height)
     win.geometry(f"{width}x{height}+{x}+{y}")
+
+
+def adopt_monitor_scaling(win):
+    """Give a new, still empty CTk window the scaling of the monitor it was just placed on.
+
+    CTk takes a new window's scaling from where it was created, and notices a monitor with
+    other scaling only later, then re-scales every widget: about 0.9 s for the main window
+    going from a 125% screen to a 150% one, with the window see-through meanwhile. Doing it
+    before anything is built costs nothing. True if the scaling changed."""
+    try:
+        from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
+        actual = ScalingTracker.get_window_dpi_scaling(win)
+        if actual == ScalingTracker.window_dpi_scaling_dict.get(win):
+            return False
+        ScalingTracker.window_dpi_scaling_dict[win] = actual
+        ScalingTracker.update_scaling_callbacks_for_window(win)
+        return True
+    except Exception:
+        return False

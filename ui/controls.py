@@ -66,6 +66,10 @@ class ScrollPage(ctk.CTkScrollableFrame):
         super().__init__(master, **kwargs)
         self._bar_check = None
         self._bar_shown = True
+        # CTkScrollbar flushes Tk's pending layout on every redraw, and each flush moves the
+        # bar again: filling a page of 20 dictation takes spent 0.9 s in that loop. Tk paints
+        # the bar at its next idle moment anyway.
+        self._scrollbar._canvas.update_idletasks = lambda: None
         self.bind("<Configure>", self._check_bar, add="+")
         self._parent_canvas.bind("<Configure>", self._check_bar, add="+")
 
