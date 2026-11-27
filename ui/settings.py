@@ -222,8 +222,18 @@ class SettingsWindow:
 
         pad ={"padx": 20, "pady": (10, 0)}
 
-        # --- Bottom bar (packed first to reserve space) ---
-        bottom = ctk.CTkFrame(self._win, fg_color=_CONTENT_BG)
+        # --- Sidebar and content column; the sidebar runs the full height of the window ---
+        body = ctk.CTkFrame(self._win, fg_color=_CONTENT_BG)
+        body.pack(fill="both", expand=True)
+        sidebar = ctk.CTkFrame(body, fg_color=theme.SURFACE, width=164, corner_radius=0)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+        self._sidebar = sidebar
+        container = ctk.CTkFrame(body, fg_color=_CONTENT_BG)
+        container.pack(side="left", fill="both", expand=True)
+
+        # --- Bottom bar, under the pages only (packed first to reserve space) ---
+        bottom = ctk.CTkFrame(container, fg_color=_CONTENT_BG)
         bottom.pack(side="bottom", fill="x")
 
         # One row: the status on the left, Apply and Close on the right on settings pages.
@@ -246,14 +256,6 @@ class SettingsWindow:
         )
         self._status_label.pack(side="left", fill="x", expand=True)
 
-        body = ctk.CTkFrame(self._win, fg_color=_CONTENT_BG)
-        body.pack(fill="both", expand=True)
-        sidebar = ctk.CTkFrame(body, fg_color=theme.SURFACE, width=164, corner_radius=0)
-        sidebar.pack(side="left", fill="y")
-        sidebar.pack_propagate(False)
-        self._sidebar = sidebar
-        container = ctk.CTkFrame(body, fg_color=_CONTENT_BG)
-        container.pack(side="left", fill="both", expand=True)
         self._pages, self._nav_buttons = {}, {}
 
         def scrolling(parent):
