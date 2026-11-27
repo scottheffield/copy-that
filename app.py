@@ -61,6 +61,8 @@ class GUIApp:
 
         # Hidden root drives the customtkinter mainloop
         ctk.set_appearance_mode(config.get("theme", "system"))
+        from ui import theme
+        theme.set_highlight(config.get("highlight", "blue"))  # Before any window reads the colors
         self._root = ctk.CTk()
         self._root.withdraw()  # No visible root window
         self._root.protocol("WM_DELETE_WINDOW", self._quit)
@@ -122,6 +124,14 @@ class GUIApp:
         from ui.theme import ThemeController
         self._theme_controller = ThemeController(self._root, config.get("theme", "system"), self._refresh_theme)
         self._root.after(30, self._drain_events)
+
+    def _apply_highlight(self):
+        """Switch the highlight color in every open window, without reopening any of them."""
+        from ui import theme
+        theme.recolor(self._root, theme.set_highlight(self._config.get("highlight", "blue")))
+        self._refresh_theme(ctk.get_appearance_mode().lower())
+        if self._settings_win:
+            self._settings_win.refresh_highlight()
 
     def _refresh_theme(self, mode):
         self._overlay.set_theme(mode)
@@ -489,11 +499,14 @@ class GUIApp:
         if old_cleanup and old_cleanup != self._cleanup_key(new_config):
             self._offer_delete.append(("cleanup", old_cleanup))
 
+        highlight_changed = new_config.get("highlight") != self._config.get("highlight")
         self._config.update(new_config)
         save_config(self._config)
         if self._settings_win:
             self._settings_win._config = dict(self._config)
         self._theme_controller.set_mode(self._config.get("theme", "system"))
+        if highlight_changed:
+            self._apply_highlight()
 
         # Update balloon settings immediately (no engine restart needed)
         self._overlay.set_show_balloon(self._config.get("show_balloon", True))

@@ -20,6 +20,57 @@ STOP_BG = ("#F8E4E9", "#492B37")
 READY_BG = ("#E0EFE4", "#203B2B")
 
 
+# Highlight colors, chosen in Settings. Each sets ACCENT, ACCENT_HOVER, ON_ACCENT and SELECTED.
+# Text on each accent, and each accent on its SELECTED tint, keeps at least 4.5:1 contrast.
+HIGHLIGHTS = {
+    "blue": {"name": "Blue", "ACCENT": ACCENT, "ACCENT_HOVER": ACCENT_HOVER,
+             "ON_ACCENT": ON_ACCENT, "SELECTED": SELECTED},
+    "violet": {"name": "Violet", "ACCENT": ("#6741C7", "#B9A2FF"), "ACCENT_HOVER": ("#5533AA", "#CBB9FF"),
+               "ON_ACCENT": ("#FFFFFF", "#22164A"), "SELECTED": ("#E8E1FB", "#352A5C")},
+    "teal": {"name": "Teal", "ACCENT": ("#0C6F69", "#6FD3C8"), "ACCENT_HOVER": ("#095A55", "#8FE0D7"),
+             "ON_ACCENT": ("#FFFFFF", "#0B2E2B"), "SELECTED": ("#D7EFEC", "#1D3F3E")},
+    "amber": {"name": "Amber", "ACCENT": ("#8F5B12", "#E3B26A"), "ACCENT_HOVER": ("#764A0E", "#EDC488"),
+              "ON_ACCENT": ("#FFFFFF", "#3A2606"), "SELECTED": ("#F5E8D3", "#3E3221")},
+}
+HIGHLIGHT_KEYS = ("ACCENT", "ACCENT_HOVER", "ON_ACCENT", "SELECTED")
+_COLOR_OPTIONS = ("fg_color", "hover_color", "text_color", "border_color", "button_color",
+                  "button_hover_color", "progress_color", "checkmark_color")
+
+
+def set_highlight(name):
+    """Switch the highlight colors; returns {old pair: new pair} for recolor().
+    Widgets made afterwards read the new colors from this module."""
+    chosen = HIGHLIGHTS.get(name, HIGHLIGHTS["blue"])
+    changes = {}
+    for key in HIGHLIGHT_KEYS:
+        old, new = globals()[key], chosen[key]
+        if old != new:
+            changes[old] = new
+        globals()[key] = new
+    return changes
+
+
+def recolor(widget, changes):
+    """Give open CTk widgets under widget the new highlight, in place. A widget with
+    keep_colors set (a color swatch) keeps its own."""
+    if not changes or getattr(widget, "keep_colors", False):
+        return
+    for option in _COLOR_OPTIONS:
+        try:
+            value = widget.cget(option)
+        except Exception:
+            continue  # Plain Tk widgets, and CTk ones without this option
+        if isinstance(value, list):
+            value = tuple(value)
+        if value in changes:
+            try:
+                widget.configure(**{option: changes[value]})
+            except Exception:
+                pass
+    for child in widget.winfo_children():
+        recolor(child, changes)
+
+
 def color(pair, mode=None):
     return pair[1 if (mode or ctk.get_appearance_mode()).lower() == "dark" else 0]
 

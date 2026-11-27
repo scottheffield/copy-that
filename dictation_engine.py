@@ -32,6 +32,7 @@ CACHE_DIR = CONFIG_DIR / "ov-cache"
 
 DEFAULT_CONFIG = {
     "theme": "system",
+    "highlight": "blue",      # Highlight color: blue, violet, teal or amber
     "device": "NPU",           # NPU, GPU, CPU
     "device_auto": True,       # Use the model's preferred device at launch; false keeps "device"
     "decoder_device": "GPU",   # Parakeet decoder: GPU or CPU
@@ -299,6 +300,8 @@ def validate_config(config: dict):
     """Validate config values. Raises ValueError on invalid values."""
     if config.get("theme", "system") not in ("system", "light", "dark"):
         raise ValueError("theme must be system, light or dark")
+    if config.get("highlight", "blue") not in ("blue", "violet", "teal", "amber"):
+        raise ValueError("highlight must be blue, violet, teal or amber")
     valid_devices = {"NPU", "GPU", "CPU"}
     if config.get("device") not in valid_devices:
         raise ValueError(f"device must be one of {valid_devices}, got '{config.get('device')}'")
