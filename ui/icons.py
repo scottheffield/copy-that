@@ -26,6 +26,27 @@ def save_app_icon(path):
     render_app_icon(256).save(path, sizes=[(s, s) for s in sizes])
 
 
+GLYPH_FONTS = (r"C:\Windows\Fonts\SegoeIcons.ttf", r"C:\Windows\Fonts\segmdl2.ttf")
+GLYPHS = {"Meetings": "\uE716", "Dictation": "\uE720", "Dictionary": "\uE82D", "Settings": "\uE713"}
+
+
+def render_glyph(char, color, size):
+    """A Windows icon font glyph (Fluent on 11, MDL2 on 10) on a transparent square,
+    or None when neither font is installed."""
+    from PIL import ImageFont
+    for path in GLYPH_FONTS:
+        try:
+            font = ImageFont.truetype(path, int(size * 0.8))
+            break
+        except OSError:
+            continue
+    else:
+        return None
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(img).text((size / 2, size / 2), char, font=font, fill=color, anchor="mm")
+    return img
+
+
 WELCOME_BITMAP_SIZE = (164, 314)  # The installer's welcome and finish page panel.
 WELCOME_BACKGROUND = "#EAF1FD"
 

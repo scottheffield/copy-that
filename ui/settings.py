@@ -1,4 +1,5 @@
-"""The main CopyThat window: Dictation and Meetings, plus settings grouped by task, in shared light and dark colors."""
+"""The main CopyThat window: Meetings, Dictation and Dictionary in the sidebar, Settings pinned
+below them with a tab for each group, in shared light and dark colors."""
 
 import customtkinter as ctk
 import tkinter as tk
@@ -103,8 +104,12 @@ def _make_wide_dropdown(om, values, on_select):
     om._open_dropdown_menu = _open
 
 
-SETTINGS_PAGES = ("General", "Speech", "Dictionary", "Advanced")
-PAGES = ("Dictation", "Meetings") + SETTINGS_PAGES
+# Settings tabs; the keys differ from their labels where a page shares the name.
+SETTINGS_TABS = {"General": "General", "Speech": "Models", "Meeting settings": "Meetings", "Advanced": "Advanced"}
+APPLY_PAGES = tuple(SETTINGS_TABS) + ("Dictionary",)  # Pages that edit settings show Apply
+NAV_PAGES = ("Meetings", "Dictation", "Dictionary")
+PAGES = NAV_PAGES + tuple(SETTINGS_TABS)
+FIRST_PAGE = "Meetings"
 RENAMED_PAGES = {"History": "Dictation"}  # Saved by 0.3.x builds
 
 
@@ -135,6 +140,7 @@ class SettingsWindow:
         self._meetings_page = None
         self._on_page_change = on_page_change
         self._page = None
+        self._settings_tab = next(iter(SETTINGS_TABS))  # Settings reopens at the last tab
         self._win: ctk.CTkToplevel | None = None
         self._model_radio_var = ctk.StringVar(value=config.get("model_size", "base"))
         self._model_rows_frame: ctk.CTkFrame | None = None
@@ -247,50 +253,70 @@ class SettingsWindow:
 
         body = ctk.CTkFrame(self._win, fg_color=_CONTENT_BG)
         body.pack(fill="both", expand=True)
-        sidebar = ctk.CTkFrame(body, fg_color=theme.SURFACE, width=140, corner_radius=0)
+        sidebar = ctk.CTkFrame(body, fg_color=theme.SURFACE, width=164, corner_radius=0)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
         container = ctk.CTkFrame(body, fg_color=_CONTENT_BG)
         container.pack(side="left", fill="both", expand=True)
         self._pages, self._nav_buttons = {}, {}
-        for name in ("Dictation", "Meetings"):
-            # Meetings scrolls inside its own page, under a fixed header.
-            self._pages[name] = ctk.CTkFrame(container, fg_color=_CONTENT_BG) if name == "Meetings" else                 ctk.CTkScrollableFrame(container, fg_color=_CONTENT_BG,
+
+        def scrolling(parent):
+            return ctk.CTkScrollableFrame(parent, fg_color=_CONTENT_BG,
                 scrollbar_button_color=_CARD_BORDER, scrollbar_button_hover_color=_INPUT_BORDER)
-            button = ctk.CTkButton(sidebar, text=name, anchor="w", width=116,
-                height=36, fg_color="transparent", hover_color=theme.SELECTED,
-                text_color=theme.TEXT, command=lambda n=name: self._select_page(n))
-            button.pack(padx=12, pady=(16 if name == "Dictation" else 3, 3))
-            self._nav_buttons[name] = button
+
+        def page_title(page, title, description):
+            ctk.CTkLabel(page, text=title, text_color=theme.TEXT,
+                font=ctk.CTkFont(size=25, weight="bold")).pack(anchor="w", padx=20, pady=(20, 2))
+            ctk.CTkLabel(page, text=description, text_color=theme.MUTED,
+                wraplength=460, justify="left").pack(anchor="w", padx=20, pady=(0, 12))
+
+        # Your things on top; Settings pinned to the bottom of the sidebar.
+        for name in NAV_PAGES:
+            # Meetings scrolls inside its own page, under a fixed header.
+            self._pages[name] = ctk.CTkFrame(container, fg_color=_CONTENT_BG) if name == "Meetings" else scrolling(container)
+            self._nav_buttons[name] = self._nav_button(sidebar, name)
+            self._nav_buttons[name].pack(padx=12, pady=(16 if name == NAV_PAGES[0] else 3, 3))
+        self._nav_buttons["Settings"] = self._nav_button(sidebar, "Settings")
+        self._nav_buttons["Settings"].pack(side="bottom", padx=12, pady=16)
+        page_title(self._pages["Dictionary"], "Dictionary", "Keep names and familiar phrases spelled your way.")
         from ui.meetings_page import MeetingsPage
         self._meetings_page = MeetingsPage(
             self._pages["Meetings"], self._root,
             lambda: self._config.get("meetings_dir", str(Path.home() / "CopyThat Meetings")),
             provider=self._meetings, status=self.update_status)
-        # A plain Tk frame: a CTkFrame this thin draws nothing. refresh_theme repaints it.
-        self._nav_divider = tk.Frame(sidebar, height=1, bd=0, highlightthickness=0,
-                                     bg=theme.color(_CARD_BORDER))
-        self._nav_divider.pack(fill="x", padx=16, pady=12)
+
+        # Settings: one page, with a tab for each group.
+        self._settings_frame = ctk.CTkFrame(container, fg_color=_CONTENT_BG)
+        ctk.CTkLabel(self._settings_frame, text="Settings", text_color=theme.TEXT,
+            font=ctk.CTkFont(size=25, weight="bold")).pack(anchor="w", padx=20, pady=(20, 6))
+        tab_row = ctk.CTkFrame(self._settings_frame, fg_color="transparent")
+        tab_row.pack(fill="x", padx=20)
+        # Plain Tk frames: a CTkFrame this thin draws nothing. _paint_tabs repaints them.
+        self._tab_rule = tk.Frame(self._settings_frame, height=1, bd=0, highlightthickness=0)
+        self._tab_rule.pack(fill="x", padx=20)
+        tab_body = ctk.CTkFrame(self._settings_frame, fg_color=_CONTENT_BG)
+        tab_body.pack(fill="both", expand=True)
+        self._tabs = {}
         descriptions = {
             "General": "Make yourself heard. Set up your everyday dictation.",
-            "Speech": "Choose how your words become text.",
-            "Dictionary": "Keep names and familiar phrases spelled your way.",
+            "Speech": "Choose the AI that turns your voice into text and polishes it. All of it runs on this PC.",
+            "Meeting settings": "Choose what goes into meeting transcripts and how audio is kept.",
             "Advanced": "Adjust performance and local recording options.",
         }
-        for name, description in descriptions.items():
-            page = ctk.CTkScrollableFrame(container, fg_color=_CONTENT_BG,
-                scrollbar_button_color=_CARD_BORDER,
-                scrollbar_button_hover_color=_INPUT_BORDER)
+        for name, label in SETTINGS_TABS.items():
+            tab = ctk.CTkFrame(tab_row, fg_color="transparent")
+            tab.pack(side="left", padx=(0, 8))
+            button = ctk.CTkButton(tab, text=label, width=0, height=36, fg_color="transparent",
+                hover_color=theme.SELECTED, font=ctk.CTkFont(size=14, weight="bold"),
+                command=lambda n=name: self._select_page(n))
+            button.pack(padx=2)
+            line = tk.Frame(tab, height=2, bd=0, highlightthickness=0)
+            line.pack(fill="x")
+            self._tabs[name] = (button, line)
+            page = scrolling(tab_body)
             self._pages[name] = page
-            button = ctk.CTkButton(sidebar, text=name, anchor="w", width=116,
-                height=36, fg_color="transparent", hover_color=theme.SELECTED,
-                text_color=theme.TEXT, command=lambda n=name: self._select_page(n))
-            button.pack(padx=12, pady=3)
-            self._nav_buttons[name] = button
-            ctk.CTkLabel(page, text=name, text_color=theme.TEXT,
-                font=ctk.CTkFont(size=25, weight="bold")).pack(anchor="w", padx=20, pady=(20, 2))
-            ctk.CTkLabel(page, text=description, text_color=theme.MUTED,
-                wraplength=460, justify="left").pack(anchor="w", padx=20, pady=(0, 12))
+            ctk.CTkLabel(page, text=descriptions[name], text_color=theme.MUTED,
+                wraplength=460, justify="left").pack(anchor="w", padx=20, pady=(14, 4))
         scroll = self._pages["General"]
         ctk.CTkLabel(scroll, text="Appearance", text_color=theme.TEXT,
             font=ctk.CTkFont(size=13, weight="bold")).pack(**pad, anchor="w")
@@ -496,24 +522,6 @@ class SettingsWindow:
             variable=self._media_var, **chk_opts,
         ).pack(anchor="w", pady=2)
 
-        self._skip_dictation_var = ctk.BooleanVar(value=self._config.get("meeting_skip_dictation", True))
-        ctk.CTkCheckBox(
-            toggles_frame, text="Leave dictation out of meeting transcripts",
-            variable=self._skip_dictation_var, **chk_opts,
-        ).pack(anchor="w", pady=2)
-
-        self._speakers_var = ctk.BooleanVar(value=self._config.get("meeting_speakers", True))
-        ctk.CTkCheckBox(
-            toggles_frame, text="Label speakers in meeting transcripts",
-            variable=self._speakers_var, **chk_opts,
-        ).pack(anchor="w", pady=2)
-
-        self._compress_var = ctk.BooleanVar(value=self._config.get("meeting_compress_audio", True))
-        ctk.CTkCheckBox(
-            toggles_frame, text="Compress meeting audio after transcribing (off keeps the original WAV files)",
-            variable=self._compress_var, **chk_opts,
-        ).pack(anchor="w", pady=2)
-
         self._enter_var =ctk.BooleanVar(value=self._config.get("auto_enter", False))
         ctk.CTkCheckBox(
             toggles_frame, text="Press Enter after paste (auto-submit)",
@@ -532,6 +540,18 @@ class SettingsWindow:
             variable=self._balloon_var, **chk_opts,
         ).pack(anchor="w", pady=2)
 
+        meeting_frame = ctk.CTkFrame(self._pages["Meeting settings"], fg_color="transparent")
+        meeting_frame.pack(padx=20, pady=(10, 10), fill="x")
+        self._skip_dictation_var = ctk.BooleanVar(value=self._config.get("meeting_skip_dictation", True))
+        self._speakers_var = ctk.BooleanVar(value=self._config.get("meeting_speakers", True))
+        self._compress_var = ctk.BooleanVar(value=self._config.get("meeting_compress_audio", True))
+        for label, variable in (
+            ("Leave dictation out of meeting transcripts", self._skip_dictation_var),
+            ("Label speakers in meeting transcripts", self._speakers_var),
+            ("Compress meeting audio after transcribing (off keeps the original WAV files)", self._compress_var),
+        ):
+            ctk.CTkCheckBox(meeting_frame, text=label, variable=variable, **chk_opts).pack(anchor="w", pady=2)
+
         self._literal_var = ctk.BooleanVar(value=self._config.get("literal_mode", False))
         self._commands_var = ctk.BooleanVar(value=self._config.get("spoken_commands", False))
         self._log_var = ctk.BooleanVar(value=self._config.get("take_log_enabled", False))
@@ -547,7 +567,7 @@ class SettingsWindow:
         ctk.CTkLabel(self._pages["Advanced"], text=f"CopyThat {version_label()}",
                      text_color=_DESC_TEXT).pack(padx=20, pady=(4, 18), anchor="w")
         scroll = self._pages["Dictionary"]
-        ctk.CTkLabel(scroll, text="Dictionary: one spoken phrase = replacement per line",
+        ctk.CTkLabel(scroll, text="One spoken phrase = replacement per line",
                      text_color=_SECTION_TEXT).pack(**pad, anchor="w")
         self._dictionary_box = ctk.CTkTextbox(
             scroll, height=280, fg_color=_INPUT_BG, text_color=_SECTION_TEXT,
@@ -566,36 +586,79 @@ class SettingsWindow:
         _make_wide_dropdown(self._bubble_dropdown, list(self._bubble_choices), None)
 
         last = RENAMED_PAGES.get(self._config.get("main_window_page"), self._config.get("main_window_page"))
-        self._select_page(requested or (last if last in PAGES else "General"))
+        self._select_page(requested or (last if last in PAGES else FIRST_PAGE))
+
+    def _nav_button(self, parent, name):
+        """A sidebar entry with its icon. Settings opens the last tab used.
+        Meetings, clicked while showing a meeting, goes back to the list."""
+        from ui.icons import GLYPHS, render_glyph
+        images = {}
+        for state, pair in (("normal", theme.TEXT), ("selected", theme.ACCENT)):
+            light, dark = (render_glyph(GLYPHS[name], color, 40) for color in pair)
+            images[state] = ctk.CTkImage(light_image=light, dark_image=dark, size=(18, 18)) if light else None
+        self._nav_images = getattr(self, "_nav_images", {})
+        self._nav_images[name] = images
+
+        def click():
+            if name == "Settings":
+                self._select_page(self._settings_tab)
+            elif name == "Meetings" and self._page == "Meetings" and self._meetings_page:
+                self._meetings_page.save_pending()
+                self._meetings_page.stop_playback()
+                self._meetings_page.show_list()
+            else:
+                self._select_page(name)
+        return ctk.CTkButton(parent, text=f"  {name}", image=images["normal"], compound="left",
+            anchor="w", width=140, height=40, fg_color="transparent", hover_color=theme.SELECTED,
+            text_color=theme.TEXT, font=ctk.CTkFont(size=14), command=click)
+
+    def _paint_tabs(self):
+        """Underline the open settings tab; the rule and lines are plain Tk, so repaint them by hand."""
+        self._tab_rule.configure(bg=theme.color(_CARD_BORDER))
+        for key, (button, line) in self._tabs.items():
+            selected = key == self._page
+            button.configure(text_color=theme.TEXT if selected else theme.MUTED)
+            line.configure(bg=theme.color(_ACCENT if selected else _CONTENT_BG))
 
     def _select_page(self, name):
         name = RENAMED_PAGES.get(name, name)
+        if name == "Settings":
+            name = self._settings_tab
         if self._meetings_page and self._page == "Meetings":
             self._meetings_page.save_pending()
-            if RENAMED_PAGES.get(name, name) != "Meetings":
+            if name != "Meetings":
                 self._meetings_page.stop_playback()
         if name not in self._pages:
-            name = "General"
-        for key, page in self._pages.items():
+            name = FIRST_PAGE
+        nav = "Settings" if name in SETTINGS_TABS else name
+        for page in self._pages.values():
             page.pack_forget()
-            self._nav_buttons[key].configure(fg_color=theme.SELECTED if key == name else "transparent")
+        self._settings_frame.pack_forget()
+        for key, button in self._nav_buttons.items():
+            images = self._nav_images[key]
+            button.configure(fg_color=theme.SELECTED if key == nav else "transparent",
+                             image=images["selected" if key == nav else "normal"])
         if name == "Dictation":
             from ui.history import build_history_page
             build_history_page(self._pages[name], self._root, list(self._history()))
         elif name == "Meetings":
             self._meetings_page.render()
-        if name in SETTINGS_PAGES:
+        if name in APPLY_PAGES:
             self._close_btn.pack(side="right", before=self._status_label)
             self._apply_btn.pack(side="right", padx=(8, 0), before=self._close_btn)
         else:
             self._apply_btn.pack_forget()
             self._close_btn.pack_forget()
+        if name in SETTINGS_TABS:
+            self._settings_tab = name
+            self._settings_frame.pack(fill="both", expand=True)
         self._pages[name].pack(fill="both", expand=True)
         if name != self._page:
             self._page = name
             self._config["main_window_page"] = name
             if self._on_page_change:
                 self._on_page_change(name)
+        self._paint_tabs()
 
     def _close(self):
         if self._meetings_page:
@@ -622,7 +685,7 @@ class SettingsWindow:
     def refresh_theme(self):
         if self.is_open:
             theme.title_bar(self._win)
-            self._nav_divider.configure(bg=theme.color(_CARD_BORDER))
+            self._paint_tabs()
 
     def _card(self, kind, key, parent, title, summary, variable, value, size_gb=None):
         """Add a model card. Downloadable cards (key set) track download state."""

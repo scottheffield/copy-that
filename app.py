@@ -443,7 +443,7 @@ class GUIApp:
         self._root.after(0, lambda: self._settings_win.show(page))
 
     def _show_settings(self):
-        self._show_main("General")
+        self._show_main("Settings")  # The last settings tab used
 
     def _show_history(self):
         self._show_main("Dictation")

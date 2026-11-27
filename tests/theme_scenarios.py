@@ -48,7 +48,7 @@ def test_settings_survive_appearance_change(root):
     for mode in ("dark", "light"):
         ctk.set_appearance_mode(mode)
         settings.refresh_theme()
-        assert settings._nav_divider.cget("bg") == theme.color(theme.BORDER, mode)
+        assert settings._tab_rule.cget("bg") == theme.color(theme.BORDER, mode)
         for page in settings._pages:
             settings._select_page(page)
             root.update_idletasks()
@@ -114,7 +114,7 @@ def test_one_window_apply_only_on_settings_pages(root):
     root.after(window.FRONT_MS + 100, root.quit)
     root.mainloop()
     assert not window._win.attributes("-topmost")
-    assert window.page == "General" and window._apply_btn.winfo_manager() == "pack" and window._close_btn.winfo_manager() == "pack"
+    assert window.page == "Meetings" and window._apply_btn.winfo_manager() == "" and window._close_btn.winfo_manager() == ""
     window.show("Dictation")
     root.update_idletasks()
     assert window.page == "Dictation" and window._apply_btn.winfo_manager() == "" and window._close_btn.winfo_manager() == ""
@@ -128,7 +128,7 @@ def test_one_window_apply_only_on_settings_pages(root):
     assert "Second take" in [w.cget("text") for w in newest.winfo_children() if isinstance(w, ctk.CTkLabel)]
     window._select_page("Dictionary")
     assert window._apply_btn.winfo_manager() == "pack"
-    assert pages == ["General", "Dictation", "General", "Dictation", "Dictionary"]
+    assert pages == ["Meetings", "Dictation", "General", "Dictation", "Dictionary"]
     window._win.destroy()
 
 
@@ -139,7 +139,7 @@ def test_window_reopens_at_last_page(root):
     window._win.destroy()
     window = SettingsWindow(root, {**DEFAULT_CONFIG, "main_window_page": "Gone"}, [])
     window.show()
-    assert window.page == "General"
+    assert window.page == "Meetings"
     window._win.destroy()
 
 
@@ -263,6 +263,36 @@ def page_texts(widget):
             out.append(child.cget("text"))
         out.extend(page_texts(child))
     return out
+
+
+def test_sidebar_settings_tabs_and_meetings_back_to_list(root, tmp_path):
+    review = make_meeting(tmp_path, "2026-11-24 1300", "2026-11-24T13:00:00", "Design review",
+                          lines=[("Me", "Let's start with onboarding.")])
+    window = SettingsWindow(root, {**DEFAULT_CONFIG, "meetings_dir": str(tmp_path)}, [], meetings=FakeMeetings())
+    window.show()
+    root.update_idletasks()
+    assert window.page == "Meetings"
+    # Settings opens at General first, then at the last tab used.
+    window._nav_buttons["Settings"].invoke()
+    assert window.page == "General" and window._apply_btn.winfo_manager() == "pack"
+    window._tabs["Meeting settings"][0].invoke()
+    assert window.page == "Meeting settings"
+    assert "Label speakers in meeting transcripts" in [
+        w.cget("text") for w in all_widgets(window._pages["Meeting settings"]) if isinstance(w, ctk.CTkCheckBox)]
+    assert window._tabs["Meeting settings"][1].cget("bg") == theme.color(theme.ACCENT)
+    window._nav_buttons["Dictation"].invoke()
+    window._nav_buttons["Settings"].invoke()
+    assert window.page == "Meeting settings"
+    window.show("Settings")  # The tray's Settings item
+    assert window.page == "Meeting settings"
+    # Meetings, clicked while a meeting is open, goes back to the list.
+    window._nav_buttons["Meetings"].invoke()
+    window._meetings_page.show_detail(review)
+    assert "Let's start with onboarding." in page_texts(window._pages["Meetings"])
+    window._nav_buttons["Meetings"].invoke()
+    texts = page_texts(window._pages["Meetings"])
+    assert "Design review" in texts and "Let's start with onboarding." not in texts
+    window._win.destroy()
 
 
 def test_meetings_page_lists_searches_and_renames(root, tmp_path):
