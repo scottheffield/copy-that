@@ -44,9 +44,15 @@ class TrayManager:
 
     def _build_menu(self):
         """Build the right-click context menu with dynamic state text."""
-        items = [
+        items = []
+        if self._on_open:
+            # The plain way into the main window, first as in other Windows tray menus. It is
+            # also the left-click action, shown bold, unless the tray panel has left-click.
+            items += [pystray.MenuItem("Open CopyThat", lambda: self._on_open(), default=not self._on_panel),
+                      pystray.Menu.SEPARATOR]
+        items += [
             pystray.MenuItem(
-                lambda _: "Stop Recording" if self._state == "recording" else "Start Recording",
+                lambda _: "Stop dictation" if self._state == "recording" else "Start dictation",
                 self._on_toggle_click,
                 enabled=lambda _: self._state in ("ready", "recording", "processing"),
             ),
@@ -72,13 +78,8 @@ class TrayManager:
                                           default=self._on_open is None))
         if self._on_panel:
             # Left-click opens the tray panel (#90); it never starts a recording. Hidden from
-            # the menu, which stays as it was.
+            # the menu, which has Open CopyThat for the main window.
             items.append(pystray.MenuItem("CopyThat panel", lambda: self._on_panel(),
-                                          default=True, visible=False))
-        elif self._on_open:
-            # Left-click opens the main window at the last page used. Hidden from the menu,
-            # which already has Dictation history and Settings.
-            items.append(pystray.MenuItem("Open CopyThat", lambda: self._on_open(),
                                           default=True, visible=False))
         if self._on_startup:
             items.append(pystray.MenuItem("Start with Windows", lambda: self._on_startup(),

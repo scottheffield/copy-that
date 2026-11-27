@@ -1,3 +1,5 @@
+import pystray
+
 from ui.tray import TrayManager
 
 
@@ -11,7 +13,7 @@ def test_left_click_opens_settings_not_recording():
     assert opened == ["settings"]
 
 
-def test_left_click_opens_main_window_at_last_page():
+def test_left_click_opens_main_window_when_there_is_no_panel():
     opened = []
     tray = TrayManager(on_toggle=lambda: opened.append("toggle"), on_quit=lambda: None,
                        on_settings=lambda: opened.append("settings"),
@@ -20,7 +22,7 @@ def test_left_click_opens_main_window_at_last_page():
     menu = tray._build_menu()
     defaults = [item for item in menu.items if item.default]
     assert [item.text for item in defaults] == ["Open CopyThat"]
-    assert not defaults[0].visible
+    assert defaults[0].visible  # Shown bold at the top of the menu
     menu(None)  # What pystray runs on a left-click
     assert opened == ["open"]
     visible = [item.text for item in menu.items if item.visible]
@@ -52,6 +54,12 @@ def test_left_click_opens_the_tray_panel_when_there_is_one():
     assert len(defaults) == 1 and not defaults[0].visible
     menu(None)  # What pystray runs on a left-click
     assert opened == ["panel"]
+    # The menu still opens the main window, first, above a divider.
+    first, divider, dictation = menu.items[:3]
+    assert first.text == "Open CopyThat" and first.visible and not first.default
+    assert divider is pystray.Menu.SEPARATOR and dictation.text == "Start dictation"
+    first(None)
+    assert opened == ["panel", "open"]
 
 
 def test_tooltip_has_a_line_per_part_and_fits_windows():
