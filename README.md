@@ -10,6 +10,27 @@ On first launch, a welcome window offers the recommended pair: Parakeet for spee
 
 Developed and tested on Windows 11 with an Intel GPU and NPU. On a PC without an Intel GPU, CopyThat runs on the CPU. One contributor's tests on a fast desktop CPU found speech recognition quick, and Polish slower on long takes ([#13](https://github.com/scottheffield/copy-that/issues/13)). NVIDIA and AMD GPUs aren't used ([#26](https://github.com/scottheffield/copy-that/issues/26)). Other setups are untested.
 
+## Screenshots
+
+The people, meetings and numbers in these are made up. `scripts/readme_screenshots.py` takes them again from the current build.
+
+Dictating: the bubble opens under the cursor and shows words as you speak.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/pill-dark.png"><img src="docs/screenshots/pill-light.png" alt="The recording bubble under the cursor in a draft, showing the words heard so far" width="560"></picture>
+
+Home: your words, speaking speed and streak, and recent meetings.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/home-dark.png"><img src="docs/screenshots/home-light.png" alt="The Home page: a greeting, words dictated, speaking speed, time saved, a six-month streak heatmap and recent meetings" width="560"></picture>
+
+Meetings, and one meeting's transcript with who said what and playback.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/meetings-dark.png"><img src="docs/screenshots/meetings-light.png" alt="The Meetings page: meetings grouped by day with search" width="420"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/meeting-dark.png"><img src="docs/screenshots/meeting-light.png" alt="A meeting's transcript with named speakers, the line being played highlighted, and playback controls" width="420"></picture>
+
+The tray panel: record a meeting, check your numbers, and rename or open recent meetings without the main window.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/tray-dark.png"><img src="docs/screenshots/tray-light.png" alt="The tray panel: Record meeting, words, wpm and streak, and the last three meetings" width="320"></picture>
+
 ## Install
 
 1. Download `CopyThat-Setup.exe` from the [latest release](https://github.com/scottheffield/copy-that/releases/latest).
